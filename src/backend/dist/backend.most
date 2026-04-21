@@ -1,0 +1,118 @@
+// Version: 1.0.0
+type Data__791452850<K, V> =
+  {var count : Nat__490723111; kvs : [var ?(K, V)]};
+type DeliveryLocation__814091852 =
+  {
+    lat : Float;
+    lng : Float;
+    orderId : Int;
+    partnerId : Principal;
+    updatedAt : Int
+  };
+type Int__270357528 = Int__616954475;
+type Int__616954475 = Int;
+type Internal__8484328<K, V> =
+  {children : [var ?Node__46230540<K, V>]; data : Data__791452850<K, V>};
+type Leaf__809889148<K, V> = {data : Data__791452850<K, V>};
+type Nat__490723111 = Nat__920180692;
+type Nat__920180692 = Nat;
+type Node__46230540<K, V> =
+  {#internal : Internal__8484328<K, V>; #leaf : Leaf__809889148<K, V>};
+type OTP__493094072 =
+  {code : Text; expiresAt : Time__900049286; verified : Bool};
+type OrderStatus__838108808 =
+  {#delivered; #pickedUp; #requested; #riderAssigned; #storeConfirmed};
+type Order__762448211 =
+  {
+    createdAt : Int;
+    customerAddress : Text;
+    customerId : Principal;
+    customerName : Text;
+    customerPhone : Text;
+    id : Int;
+    itemName : Text;
+    pinnedLatitude : Float;
+    pinnedLongitude : Float;
+    status : OrderStatus__838108808;
+    storeId : Int;
+    totalAmount : ?Float
+  };
+type Product__853085059 =
+  {
+    createdAt : Int;
+    description : Text;
+    image : Text;
+    name : Text;
+    price : Float;
+    productId : Int;
+    storeId : Int;
+    vendorId : Principal
+  };
+type ResetLog__133145611 = {caller : Principal; timestamp : Int};
+type Store__1059667885 =
+  {
+    category : Text;
+    createdAt : Int;
+    deliveryTime : Text;
+    description : Text;
+    image : Text;
+    isOpen : Bool;
+    latitude : Float;
+    longitude : Float;
+    name : Text;
+    rating : Float;
+    storeId : Int;
+    vendorId : Principal
+  };
+type Time__796480547 = Int__270357528;
+type Time__900049286 = Time__796480547;
+type UserProfile__491224006 =
+  {
+    createdAt : Int;
+    id : Principal;
+    name : Text;
+    phone : Text;
+    role : UserRole__599675725
+  };
+type UserRole__599675725 = {#admin; #customer; #deliveryP; #store};
+actor {
+  stable deliveryLocations :
+    {
+      var root : Node__46230540<Int, DeliveryLocation__814091852>;
+      var size : Nat__490723111
+    };
+  stable var nextOrderId : Nat;
+  stable var nextProductId : Nat;
+  stable var nextStoreId : Nat;
+  stable orders :
+    {
+      var root : Node__46230540<Int, Order__762448211>;
+      var size : Nat__490723111
+    };
+  stable otps :
+    {
+      var root : Node__46230540<Text, OTP__493094072>;
+      var size : Nat__490723111
+    };
+  stable products :
+    {
+      var root : Node__46230540<Int, Product__853085059>;
+      var size : Nat__490723111
+    };
+  stable var resetLogs :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?ResetLog__133145611]];
+      var elementIndex : Nat__490723111
+    };
+  stable stores :
+    {
+      var root : Node__46230540<Int, Store__1059667885>;
+      var size : Nat__490723111
+    };
+  stable users :
+    {
+      var root : Node__46230540<Principal, UserProfile__491224006>;
+      var size : Nat__490723111
+    }
+};
