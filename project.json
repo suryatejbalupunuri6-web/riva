@@ -1,0 +1,24 @@
+{
+  "overview": "Riva is a hyperlocal delivery platform connecting customers with local vendors and delivery partners. Customers browse products and stores, place orders, and track delivery live. Vendors manage multiple stores, products, and orders. Delivery partners pick up and deliver orders with live GPS tracking.",
+  "features": [
+    "Multi-store vendor management with store switching",
+    "Pending vendor acceptance stage with 5-minute countdown",
+    "Live order tracking with GPS and map",
+    "Customer marketplace with product-first homepage",
+    "Category-based product discovery (Stationery, Grocery, Fruits, Fashion, Toys)",
+    "Vendor analytics dashboard (earnings, orders, best sellers)",
+    "Geofenced delivery zone enforcement",
+    "Email/Gmail authentication",
+    "URL-based routing with persistent navigation state"
+  ],
+  "category": "marketplace",
+  "tags": [
+    "delivery",
+    "hyperlocal",
+    "marketplace",
+    "vendor",
+    "tracking",
+    "mobile-first"
+  ],
+  "last_updated": "2026-05-07T10:31:01.515Z"
+}

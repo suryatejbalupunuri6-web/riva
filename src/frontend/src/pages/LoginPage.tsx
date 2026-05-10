@@ -1,146 +1,87 @@
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Copy, Info, Loader2, Phone, Zap } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { Loader2, Phone, User, Zap } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
-import { createActorWithConfig } from "../config";
 import { useApp } from "../context/AppContext";
+import { normalizePhone, sendOtp } from "../utils/clerkAuth";
 
 function validatePhone(phone: string): string | null {
   const cleaned = phone.replace(/\s/g, "");
   if (!cleaned) return "Phone number is required.";
-  const digits = cleaned.replace(/^\+/, "");
+  // After normalization, should be E.164
+  const normalized = normalizePhone(cleaned);
+  if (!normalized.startsWith("+"))
+    return "Enter a valid phone number with country code.";
+  const digits = normalized.slice(1);
   if (!/^\d+$/.test(digits)) return "Enter a valid phone number (digits only).";
   if (digits.length < 7 || digits.length > 15)
-    return "Phone number must be 7–15 digits.";
+    return "Phone number must be 7\u201315 digits.";
   return null;
 }
 
-/** Generate a 6-digit OTP locally as fallback when backend is unavailable */
-function generateLocalOtp(phone: string): string {
-  const seed =
-    Date.now() + phone.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-  const raw = seed % 900000;
-  return String(100000 + raw);
-}
-
-/** Check if an error is an IC0508 stopped-canister error */
-function isCanisterStoppedError(e: unknown): boolean {
-  const msg =
-    e && typeof e === "object" && "message" in e
-      ? String((e as { message: unknown }).message)
-      : String(e);
-  return (
-    msg.includes("IC0508") ||
-    msg.includes("stopped") ||
-    msg.includes("Canister")
-  );
+function validateName(name: string): string | null {
+  if (!name.trim()) return "Customer name is required.";
+  if (name.trim().length < 2) return "Name must be at least 2 characters.";
+  return null;
 }
 
 export default function LoginPage() {
-  const { navigate, setCurrentPhone, setDemoOtp } = useApp();
+  const { setCurrentPhone, setCustomerName } = useApp();
+  const navigate = useNavigate();
   const [phone, setPhone] = useState("+91");
+  const [name, setName] = useState(() => {
+    try {
+      return localStorage.getItem("riva_user_name") ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [phoneError, setPhoneError] = useState("");
+  const [nameError, setNameError] = useState("");
   const [sendError, setSendError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [sentOtp, setSentOtp] = useState("");
-  const [isFallback, setIsFallback] = useState(false);
-  const actorRef = useRef<Awaited<
-    ReturnType<typeof createActorWithConfig>
-  > | null>(null);
-
-  // Pre-warm actor on mount
-  useEffect(() => {
-    console.log("[OTP] Pre-warming backend actor...");
-    createActorWithConfig()
-      .then((a) => {
-        actorRef.current = a;
-        console.log("[OTP] Actor pre-warmed successfully");
-      })
-      .catch((e) => {
-        console.warn("[OTP] Actor pre-warm failed:", e);
-      });
-  }, []);
-
-  // Auto-navigate to otp-verify 2 seconds after OTP is generated
-  useEffect(() => {
-    if (!sentOtp) return;
-    const timer = setTimeout(() => {
-      navigate("otp-verify");
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [sentOtp, navigate]);
 
   const handleSendOTP = async () => {
-    const err = validatePhone(phone);
-    if (err) {
-      setPhoneError(err);
+    const nErr = validateName(name);
+    const pErr = validatePhone(phone);
+    if (nErr) {
+      setNameError(nErr);
       return;
     }
+    if (pErr) {
+      setPhoneError(pErr);
+      return;
+    }
+
+    setNameError("");
     setPhoneError("");
     setSendError("");
     setLoading(true);
-    setIsFallback(false);
 
-    console.log("[OTP] Requesting OTP for", phone);
-
+    // Store name persistently
+    setCustomerName(name.trim());
     try {
-      // Use cached actor or create a fresh one
-      let actor = actorRef.current;
-      if (!actor) {
-        console.log("[OTP] Creating fresh actor...");
-        actor = await createActorWithConfig();
-        actorRef.current = actor;
-      }
-
-      console.log("[OTP] Calling backend generateOtp...");
-      const otp = await actor.generateOtp(phone.trim());
-      console.log("[OTP] Backend returned OTP successfully");
-
-      setSentOtp(otp);
-      setDemoOtp(otp);
-      setCurrentPhone(phone.trim());
-      setIsFallback(false);
-      toast.success("OTP sent! Auto-redirecting in 2 seconds…");
-    } catch (e: unknown) {
-      const stopped = isCanisterStoppedError(e);
-      console.error("[OTP] Backend call failed:", e);
-      console.warn(
-        "[OTP] Canister stopped:",
-        stopped,
-        "— using local fallback OTP",
-      );
-
-      // Reset actor so next attempt tries fresh
-      actorRef.current = null;
-
-      // Fallback: generate OTP locally
-      const localOtp = generateLocalOtp(phone.trim());
-      setSentOtp(localOtp);
-      setDemoOtp(localOtp);
-      setCurrentPhone(phone.trim());
-      setIsFallback(true);
-
-      if (stopped) {
-        toast.warning("Backend temporarily unavailable — using test OTP.");
-      } else {
-        const msg =
-          e && typeof e === "object" && "message" in e
-            ? String((e as { message: unknown }).message)
-            : "Backend error";
-        console.error("[OTP] Non-stop error:", msg);
-        toast.warning("Could not reach backend — using test OTP.");
-      }
-    } finally {
-      setLoading(false);
+      localStorage.setItem("riva_user_name", name.trim());
+    } catch {
+      /* ignore */
     }
-  };
 
-  const handleCopyAndContinue = () => {
-    navigator.clipboard.writeText(sentOtp).catch(() => {});
-    navigate("otp-verify");
+    const normalized = normalizePhone(phone.trim());
+    console.log("[Login] Sending OTP to", normalized);
+
+    const result = await sendOtp(normalized, name.trim());
+    setLoading(false);
+
+    if (result.success) {
+      setCurrentPhone(normalized);
+      toast.success("OTP sent to your phone!");
+      navigate({ to: "/login" });
+    } else {
+      const errMsg = result.error ?? "Failed to send OTP. Please try again.";
+      setSendError(errMsg);
+      toast.error(errMsg);
+    }
   };
 
   return (
@@ -151,15 +92,22 @@ export default function LoginPage() {
         transition={{ duration: 0.4 }}
         className="w-full max-w-sm"
       >
+        {/* Brand header */}
         <div className="text-center mb-8">
-          <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center mx-auto mb-3">
-            <Zap className="w-6 h-6 text-white fill-current" />
+          <div
+            className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-3"
+            style={{ backgroundColor: "#16a34a" }}
+          >
+            <Zap
+              className="w-6 h-6"
+              style={{ color: "#ffffff", fill: "#ffffff" }}
+            />
           </div>
           <h1 className="text-2xl font-bold text-foreground">
             Welcome to Riva
           </h1>
-          <p className="text-sm text-foreground/70 font-medium mt-1">
-            Enter your phone number to continue
+          <p className="text-sm text-muted-foreground font-medium mt-1">
+            We'll send a real SMS OTP to your phone
           </p>
         </div>
 
@@ -167,18 +115,68 @@ export default function LoginPage() {
           className="bg-card border border-border rounded-xl shadow-card p-6 space-y-4"
           data-ocid="login.panel"
         >
+          {/* Customer Name */}
           <div className="space-y-1.5">
-            <Label
-              htmlFor="phone"
-              className="text-sm font-semibold text-foreground"
+            <label
+              htmlFor="customer-name"
+              className="text-sm font-semibold text-foreground flex gap-1"
             >
-              Mobile Number
-            </Label>
+              Customer Name <span style={{ color: "#dc2626" }}>*</span>
+            </label>
             <div className="relative">
-              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/50" />
-              <Input
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+              <input
+                id="customer-name"
+                type="text"
+                placeholder="e.g. Rahul Sharma"
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameError("");
+                }}
+                style={{
+                  fontSize: "16px",
+                  width: "100%",
+                  padding: "12px 12px 12px 2.5rem",
+                  borderRadius: "8px",
+                  border: nameError ? "2px solid #dc2626" : "1px solid #e5e7eb",
+                  backgroundColor: "#ffffff",
+                  color: "#1f2937",
+                  outline: "none",
+                }}
+                data-ocid="login.name.input"
+                onKeyDown={(e) => e.key === "Enter" && handleSendOTP()}
+                autoComplete="name"
+              />
+            </div>
+            {nameError && (
+              <p
+                className="text-xs font-semibold"
+                style={{ color: "#dc2626" }}
+                data-ocid="login.name_error"
+              >
+                {nameError}
+              </p>
+            )}
+          </div>
+
+          {/* Mobile Number */}
+          <div className="space-y-1.5">
+            <label
+              htmlFor="phone"
+              className="text-sm font-semibold text-foreground flex gap-1"
+            >
+              Mobile Number <span style={{ color: "#dc2626" }}>*</span>
+            </label>
+            <p className="text-xs text-muted-foreground">
+              +91XXXXXXXXXX or 10-digit Indian number
+            </p>
+            <div className="relative">
+              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+              <input
                 id="phone"
                 type="tel"
+                inputMode="tel"
                 placeholder="+91 9876543210"
                 value={phone}
                 onChange={(e) => {
@@ -186,14 +184,27 @@ export default function LoginPage() {
                   setPhoneError("");
                   setSendError("");
                 }}
-                className="pl-9 border-border bg-white text-foreground"
+                style={{
+                  fontSize: "16px",
+                  width: "100%",
+                  padding: "12px 12px 12px 2.5rem",
+                  borderRadius: "8px",
+                  border: phoneError
+                    ? "2px solid #dc2626"
+                    : "1px solid #e5e7eb",
+                  backgroundColor: "#ffffff",
+                  color: "#1f2937",
+                  outline: "none",
+                }}
                 data-ocid="login.phone.input"
                 onKeyDown={(e) => e.key === "Enter" && handleSendOTP()}
+                autoComplete="tel"
               />
             </div>
             {phoneError && (
               <p
-                className="text-xs text-destructive font-medium"
+                className="text-xs font-semibold"
+                style={{ color: "#dc2626" }}
                 data-ocid="login.phone_error"
               >
                 {phoneError}
@@ -201,88 +212,49 @@ export default function LoginPage() {
             )}
           </div>
 
-          <Button
+          {/* Send OTP button */}
+          <button
+            type="button"
             onClick={handleSendOTP}
             disabled={loading}
-            className="w-full bg-primary hover:bg-primary/90 text-white font-semibold"
             data-ocid="login.send_otp.button"
+            style={{
+              width: "100%",
+              padding: "13px",
+              borderRadius: "8px",
+              backgroundColor: loading ? "#15803d" : "#16a34a",
+              color: "#ffffff",
+              border: "none",
+              fontWeight: 700,
+              fontSize: "15px",
+              cursor: loading ? "not-allowed" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+              touchAction: "manipulation",
+              boxShadow: "0 2px 8px rgba(22,163,74,0.3)",
+              opacity: 1,
+              minHeight: "48px",
+            }}
           >
             {loading ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Sending OTP…
+                <Loader2 className="h-4 w-4 animate-spin" /> Sending OTP…
               </>
             ) : (
-              "Send OTP"
+              "Send OTP \u2192"
             )}
-          </Button>
+          </button>
 
           {sendError && (
             <p
-              className="text-xs text-red-600 font-semibold text-center"
+              className="text-xs font-semibold text-center"
+              style={{ color: "#dc2626" }}
               data-ocid="login.send_error_state"
             >
-              ⚠️ {sendError}
+              \u26a0\ufe0f {sendError}
             </p>
-          )}
-
-          {sentOtp && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.97 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.3 }}
-              className={`border-2 rounded-xl p-4 space-y-3 ${
-                isFallback
-                  ? "bg-orange-50 border-orange-400"
-                  : "bg-amber-50 border-amber-400"
-              }`}
-              data-ocid="login.demo_otp.panel"
-            >
-              <div className="flex gap-2 items-start">
-                <Info
-                  className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
-                    isFallback ? "text-orange-600" : "text-amber-600"
-                  }`}
-                />
-                <div>
-                  <p
-                    className={`text-xs font-bold uppercase tracking-wide ${
-                      isFallback ? "text-orange-800" : "text-amber-800"
-                    }`}
-                  >
-                    {isFallback
-                      ? "Test OTP (backend offline) — Use this code:"
-                      : "Demo OTP — Use this code:"}
-                  </p>
-                  <p
-                    className={`text-3xl font-mono font-extrabold tracking-[0.3em] mt-1 ${
-                      isFallback ? "text-orange-900" : "text-amber-900"
-                    }`}
-                  >
-                    {sentOtp}
-                  </p>
-                  <p
-                    className={`text-xs mt-1 font-medium ${
-                      isFallback ? "text-orange-700" : "text-amber-700"
-                    }`}
-                  >
-                    Auto-redirecting in 2 seconds…
-                  </p>
-                </div>
-              </div>
-              <Button
-                onClick={handleCopyAndContinue}
-                className={`w-full text-white font-bold text-sm ${
-                  isFallback
-                    ? "bg-orange-500 hover:bg-orange-600"
-                    : "bg-amber-500 hover:bg-amber-600"
-                }`}
-                data-ocid="login.copy_continue.button"
-              >
-                <Copy className="w-4 h-4 mr-2" />
-                Copy OTP &amp; Continue
-              </Button>
-            </motion.div>
           )}
         </div>
       </motion.div>

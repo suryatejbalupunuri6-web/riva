@@ -1,5 +1,17 @@
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Clock, MapPin, Navigation, Timer } from "lucide-react";
+import { useNavigate, useParams } from "@tanstack/react-router";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Clock,
+  MapPin,
+  Navigation,
+  Package,
+  ShoppingBag,
+  Timer,
+  Truck,
+} from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   type MutableRefObject,
@@ -10,6 +22,7 @@ import {
 } from "react";
 import { OrderStatus } from "../backend";
 import { useApp } from "../context/AppContext";
+import { useCart } from "../context/CartContext";
 import { useNotifications } from "../context/NotificationContext";
 import { formatCountdown, useOrderCountdown } from "../hooks/useOrderCountdown";
 import {
@@ -18,9 +31,10 @@ import {
   useStoreById,
 } from "../hooks/useQueries";
 
-// Leaflet is loaded via CDN (same approach as MapPickerModal)
+// Leaflet loaded via CDN
 declare global {
   interface Window {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     L: any;
   }
 }
@@ -68,7 +82,150 @@ function haversineKm(
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/** Animated "Updating location..." indicator */
+function animateMarkerTo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  marker: any,
+  animFrameRef: MutableRefObject<number | null>,
+  fromLat: number,
+  fromLng: number,
+  toLat: number,
+  toLng: number,
+  durationMs: number,
+) {
+  if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
+  const start = performance.now();
+  const tick = (now: number) => {
+    const elapsed = now - start;
+    const t = Math.min(elapsed / durationMs, 1);
+    const ease = 1 - (1 - t) ** 3;
+    marker.setLatLng([
+      fromLat + (toLat - fromLat) * ease,
+      fromLng + (toLng - fromLng) * ease,
+    ]);
+    if (t < 1) {
+      animFrameRef.current = requestAnimationFrame(tick);
+    } else {
+      animFrameRef.current = null;
+    }
+  };
+  animFrameRef.current = requestAnimationFrame(tick);
+}
+
+const STATUS_STEPS = [
+  {
+    key: OrderStatus.requested,
+    label: "Placed",
+    icon: ShoppingBag,
+    emoji: "🛍️",
+  },
+  {
+    key: OrderStatus.storeConfirmed,
+    label: "Confirmed",
+    icon: CheckCircle2,
+    emoji: "✅",
+  },
+  {
+    key: OrderStatus.riderAssigned,
+    label: "Rider Assigned",
+    icon: Truck,
+    emoji: "🚴",
+  },
+  {
+    key: OrderStatus.pickedUp,
+    label: "On the Way",
+    icon: Package,
+    emoji: "📦",
+  },
+  {
+    key: OrderStatus.delivered,
+    label: "Delivered",
+    icon: CheckCircle2,
+    emoji: "🎉",
+  },
+] as const;
+
+type StatusKey = (typeof STATUS_STEPS)[number]["key"];
+
+function getStepIndex(status: StatusKey | string): number {
+  const idx = STATUS_STEPS.findIndex((s) => s.key === status);
+  return idx === -1 ? 0 : idx;
+}
+
+function OrderStatusTracker({ status }: { status: string }) {
+  const activeIdx = getStepIndex(status);
+
+  return (
+    <div
+      className="mx-4 mt-4 bg-card border border-border rounded-2xl p-4"
+      data-ocid="tracking.status_steps.panel"
+    >
+      <p className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-4">
+        Order Progress
+      </p>
+      <div className="flex items-start justify-between gap-1">
+        {STATUS_STEPS.map((step, idx) => {
+          const isPast = idx < activeIdx;
+          const isActive = idx === activeIdx;
+          const Icon = step.icon;
+
+          return (
+            <div
+              key={step.key}
+              className="flex flex-col items-center gap-2 flex-1 min-w-0 relative"
+            >
+              {/* Connector line */}
+              {idx < STATUS_STEPS.length - 1 && (
+                <div
+                  className="absolute left-[calc(50%+20px)] right-[calc(-50%+20px)] top-5 h-0.5 z-0"
+                  style={{
+                    background: isPast || isActive ? "#16a34a" : "#e5e7eb",
+                  }}
+                />
+              )}
+
+              {/* Icon circle — 36–40px */}
+              <div
+                className={`relative z-10 flex items-center justify-center rounded-full flex-shrink-0 transition-all duration-300 ${
+                  isActive
+                    ? "w-10 h-10 bg-green-600 shadow-lg ring-2 ring-green-300"
+                    : isPast
+                      ? "w-9 h-9 bg-green-100"
+                      : "w-9 h-9 bg-muted border-2 border-border"
+                }`}
+                aria-label={step.label}
+              >
+                {isActive ? (
+                  <Icon className="w-5 h-5 text-white" />
+                ) : isPast ? (
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                ) : (
+                  <Icon className="w-4 h-4 text-muted-foreground/40" />
+                )}
+                {isActive && (
+                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full border-2 border-white animate-pulse" />
+                )}
+              </div>
+
+              {/* Label */}
+              <span
+                className={`text-[10px] text-center leading-tight font-medium w-full px-0.5 ${
+                  isActive
+                    ? "font-bold text-green-700"
+                    : isPast
+                      ? "text-green-600"
+                      : "text-muted-foreground/40"
+                }`}
+              >
+                {step.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function UpdatingLocationPill() {
   return (
     <div
@@ -86,42 +243,19 @@ function UpdatingLocationPill() {
   );
 }
 
-/** Smooth marker interpolation using requestAnimationFrame */
-function animateMarkerTo(
-  marker: any,
-  animFrameRef: MutableRefObject<number | null>,
-  fromLat: number,
-  fromLng: number,
-  toLat: number,
-  toLng: number,
-  durationMs: number,
-) {
-  if (animFrameRef.current !== null) {
-    cancelAnimationFrame(animFrameRef.current);
-  }
-  const start = performance.now();
-  const tick = (now: number) => {
-    const elapsed = now - start;
-    const t = Math.min(elapsed / durationMs, 1);
-    const ease = 1 - (1 - t) ** 3;
-    const lat = fromLat + (toLat - fromLat) * ease;
-    const lng = fromLng + (toLng - fromLng) * ease;
-    marker.setLatLng([lat, lng]);
-    if (t < 1) {
-      animFrameRef.current = requestAnimationFrame(tick);
-    } else {
-      animFrameRef.current = null;
-    }
-  };
-  animFrameRef.current = requestAnimationFrame(tick);
-}
-
 export default function OrderTrackingPage() {
-  const { navigate, trackingOrderId, currentUser } = useApp();
+  const { currentUser } = useApp();
+  const navigate = useNavigate();
+  const { orderId: trackingOrderId } = useParams({
+    from: "/customer/track/$orderId",
+  });
   const { addNotification } = useNotifications();
+  const { addItem } = useCart();
   const customerId = currentUser?.id?.toString();
 
   const { data: orders = [] } = useMyOrders(customerId);
+
+  // trackingOrderId is string | null; Order.id is string — direct comparison works
   const order = useMemo(
     () =>
       orders.find(
@@ -130,15 +264,20 @@ export default function OrderTrackingPage() {
     [orders, trackingOrderId],
   );
 
-  const { data: deliveryLocation } = useDeliveryLocation(trackingOrderId);
+  // Use string orderId for delivery location
+  const { data: deliveryLocation } = useDeliveryLocation(order?.id ?? null);
   const { data: store } = useStoreById(order?.storeId ?? null);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const riderMarkerRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const storeMarkerRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const customerMarkerRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const polylineRef = useRef<any>(null);
-  // Store previous rider position for smooth animation
   const prevRiderPosRef = useRef<{ lat: number; lng: number } | null>(null);
   const animFrameRef = useRef<number | null>(null);
 
@@ -148,58 +287,47 @@ export default function OrderTrackingPage() {
   );
 
   const isPending = order?.status === OrderStatus.requested;
-  const orderId = order?.id?.toString() ?? null;
+  const orderId = order?.id ?? null;
 
-  // Countdown (only meaningful for pending orders)
-  const { secondsLeft, isExpired } = useOrderCountdown(
-    isPending ? orderId : null,
-  );
+  const { secondsLeft } = useOrderCountdown(isPending ? orderId : null);
 
-  // Fire expiry notification exactly once
+  // Backend #expired is the authoritative source — never rely solely on client timer
+  const isBackendExpired = order?.status === OrderStatus.expired;
+
+  // Fire expiry notification once (only when backend confirms expiry)
   const expiredNotifFired = useRef(false);
   useEffect(() => {
-    if (isPending && isExpired && !expiredNotifFired.current) {
+    if (isBackendExpired && !expiredNotifFired.current) {
       expiredNotifFired.current = true;
       addNotification({
         title: "Riva: Order Expired",
-        message: "Your order expired. Try again.",
+        message:
+          "Riva: Your order expired. No vendor accepted in time. Try again.",
         type: "order",
       });
-      // Mark expired in localStorage
-      try {
-        const stored = localStorage.getItem("riva_expired_orders");
-        const ids: string[] = stored ? JSON.parse(stored) : [];
-        if (orderId && !ids.includes(orderId)) {
-          ids.push(orderId);
-          localStorage.setItem("riva_expired_orders", JSON.stringify(ids));
-        }
-      } catch {}
     }
-  }, [isPending, isExpired, orderId, addNotification]);
+  }, [isBackendExpired, addNotification]);
 
-  // Load Leaflet CDN
   useEffect(() => {
-    if (!leafletReady) {
-      loadLeaflet().then(() => setLeafletReady(true));
-    }
+    if (!leafletReady) loadLeaflet().then(() => setLeafletReady(true));
   }, [leafletReady]);
 
-  // Track seconds since last update
+  // Track seconds since last location update
   useEffect(() => {
     if (!deliveryLocation) {
       setSecondsSinceUpdate(null);
       return;
     }
-    const computeSecs = () => {
+    const compute = () => {
       const updatedAtMs = Number(deliveryLocation.updatedAt) / 1_000_000;
       setSecondsSinceUpdate(Math.floor((Date.now() - updatedAtMs) / 1000));
     };
-    computeSecs();
-    const timer = setInterval(computeSecs, 1000);
+    compute();
+    const timer = setInterval(compute, 1000);
     return () => clearInterval(timer);
   }, [deliveryLocation]);
 
-  // Initialize map once Leaflet is ready
+  // Initialize map
   useEffect(() => {
     if (!leafletReady) return;
     if (mapRef.current) return;
@@ -208,13 +336,12 @@ export default function OrderTrackingPage() {
     const L = window.L;
     const map = L.map(el, { zoomControl: true }).setView([17.338, 78.553], 15);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "\u00a9 OpenStreetMap contributors",
+      attribution: "© OpenStreetMap contributors",
     }).addTo(map);
     mapRef.current = map;
     return () => {
-      if (animFrameRef.current !== null) {
+      if (animFrameRef.current !== null)
         cancelAnimationFrame(animFrameRef.current);
-      }
       map.remove();
       mapRef.current = null;
       riderMarkerRef.current = null;
@@ -225,18 +352,12 @@ export default function OrderTrackingPage() {
     };
   }, [leafletReady]);
 
-  // Place store & customer markers after map is ready
+  // Place store & customer markers
   useEffect(() => {
     if (!mapRef.current || !leafletReady) return;
     const L = window.L;
-
-    // Customer marker
     if (order?.pinnedLatitude && order?.pinnedLongitude) {
-      const icon = L.divIcon({
-        html: "\u{1F4CD}",
-        className: "",
-        iconSize: [24, 24],
-      });
+      const icon = L.divIcon({ html: "📍", className: "", iconSize: [28, 28] });
       if (!customerMarkerRef.current) {
         customerMarkerRef.current = L.marker(
           [order.pinnedLatitude, order.pinnedLongitude],
@@ -251,14 +372,14 @@ export default function OrderTrackingPage() {
         ]);
       }
     }
-
-    // Store marker
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const storeLat = (store as any)?.latitude ?? 17.338;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const storeLng = (store as any)?.longitude ?? 78.553;
     const storeIcon = L.divIcon({
-      html: "\u{1F3EA}",
+      html: "🏪",
       className: "",
-      iconSize: [24, 24],
+      iconSize: [28, 28],
     });
     if (!storeMarkerRef.current) {
       storeMarkerRef.current = L.marker([storeLat, storeLng], {
@@ -271,17 +392,16 @@ export default function OrderTrackingPage() {
     }
   }, [order, store, leafletReady]);
 
-  // Update rider marker and polyline when location changes
+  // Update rider marker
   useEffect(() => {
     if (!mapRef.current || !deliveryLocation || !leafletReady) return;
     const L = window.L;
-
     const riderLat = deliveryLocation.lat;
     const riderLng = deliveryLocation.lng;
     const riderIcon = L.divIcon({
-      html: "\u{1F6F5}",
+      html: "🛵",
       className: "",
-      iconSize: [24, 24],
+      iconSize: [28, 28],
     });
 
     if (!riderMarkerRef.current) {
@@ -298,7 +418,6 @@ export default function OrderTrackingPage() {
         (Math.abs(prev.lat - riderLat) > 0.000001 ||
           Math.abs(prev.lng - riderLng) > 0.000001)
       ) {
-        // Animate smoothly from old to new position over 1 second
         animateMarkerTo(
           riderMarkerRef.current,
           animFrameRef,
@@ -314,8 +433,9 @@ export default function OrderTrackingPage() {
       prevRiderPosRef.current = { lat: riderLat, lng: riderLng };
     }
 
-    // Update polyline
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const storeLat = (store as any)?.latitude ?? 17.338;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const storeLng = (store as any)?.longitude ?? 78.553;
     const customerLat = order?.pinnedLatitude ?? 17.338;
     const customerLng = order?.pinnedLongitude ?? 78.553;
@@ -337,7 +457,6 @@ export default function OrderTrackingPage() {
     });
   }, [deliveryLocation, order, store, leafletReady]);
 
-  // Calculate ETA
   const etaMinutes = useMemo(() => {
     if (!deliveryLocation || !order?.pinnedLatitude || !order?.pinnedLongitude)
       return null;
@@ -351,15 +470,22 @@ export default function OrderTrackingPage() {
   }, [deliveryLocation, order]);
 
   const isDelivered = order?.status === OrderStatus.delivered;
-
-  // Show stale indicator only when we HAVE location data but it stopped updating
   const isStale = secondsSinceUpdate !== null && secondsSinceUpdate > 8;
-  // "Updating location..." shown only when GPS was received before but went stale
   const showUpdatingIndicator =
     deliveryLocation !== null && deliveryLocation !== undefined && isStale;
-  // "Waiting for rider..." shown when order is active but no location yet
   const waitingForRider =
-    !deliveryLocation && !isDelivered && !(isPending && isExpired);
+    !deliveryLocation && !isDelivered && !isBackendExpired;
+  const showMap = !isBackendExpired;
+
+  const statusColor: Record<string, string> = {
+    [OrderStatus.requested]: "bg-amber-100 text-amber-700 border-amber-300",
+    [OrderStatus.storeConfirmed]: "bg-blue-100 text-blue-700 border-blue-300",
+    [OrderStatus.riderAssigned]:
+      "bg-purple-100 text-purple-700 border-purple-300",
+    [OrderStatus.pickedUp]: "bg-orange-100 text-orange-700 border-orange-300",
+    [OrderStatus.delivered]: "bg-green-100 text-green-700 border-green-300",
+    [OrderStatus.expired]: "bg-red-100 text-red-700 border-red-300",
+  };
 
   return (
     <div
@@ -371,53 +497,90 @@ export default function OrderTrackingPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => navigate("customer-dashboard")}
+          onClick={() => navigate({ to: "/customer" })}
           className="gap-1.5 -ml-2"
           data-ocid="tracking.back.button"
         >
           <ArrowLeft className="w-4 h-4" />
           Back
         </Button>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <h1 className="text-base font-bold text-foreground">Live Tracking</h1>
           {order && (
-            <p className="text-xs text-muted-foreground">
-              Order #{order.id.toString()}
+            <p className="text-xs text-muted-foreground truncate">
+              Order #{order.id}
             </p>
           )}
         </div>
+        {order && (
+          <Badge
+            className={`text-xs border ${statusColor[order.status as string] ?? "bg-muted text-muted-foreground"}`}
+            variant="outline"
+          >
+            {order.status}
+          </Badge>
+        )}
         {secondsSinceUpdate !== null && (
           <div
             className="flex items-center gap-1 text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full"
             data-ocid="tracking.last_updated.panel"
           >
             <Clock className="w-3 h-3" />
-            {secondsSinceUpdate}s ago
+            {secondsSinceUpdate}s
           </div>
         )}
       </div>
 
-      {/* Countdown pill for pending orders */}
+      {/* Status progress tracker */}
+      {order && !isBackendExpired && (
+        <OrderStatusTracker status={order.status as string} />
+      )}
+
+      {/* Countdown pill for pending orders — vendor acceptance stage */}
       <AnimatePresence>
-        {isPending && !isExpired && (
+        {isPending && !isBackendExpired && (
           <motion.div
-            key="countdown"
+            key="pending-acceptance"
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             className="mx-4 mt-4"
           >
             <div
-              className="flex items-center justify-center gap-2 bg-amber-50 border border-amber-300 rounded-full px-4 py-2"
-              data-ocid="tracking.countdown.panel"
+              className="bg-amber-50 border border-amber-300 rounded-2xl px-4 py-4"
+              data-ocid="tracking.pending_acceptance.panel"
             >
-              <Timer className="w-4 h-4 text-amber-600" />
-              <span className="text-sm font-bold text-amber-700">
-                Order expires in{" "}
-                <span className="font-mono tabular-nums">
-                  {formatCountdown(secondsLeft)}
+              <div className="flex items-center gap-3 mb-3">
+                <span className="relative flex h-3 w-3 flex-shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500" />
                 </span>
-              </span>
+                <p className="text-sm font-bold text-amber-800">
+                  Waiting for a vendor to accept your order...
+                </p>
+              </div>
+              <p className="text-xs text-amber-600 mb-3">
+                Vendors have 5 minutes to accept. If no one accepts, your order
+                will expire and you can reorder.
+              </p>
+              <div className="flex items-center justify-center gap-2 bg-white/70 border border-amber-200 rounded-full px-4 py-2">
+                <Timer className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                <span className="text-sm font-bold text-amber-700">
+                  Expires in{" "}
+                  <span
+                    className={`font-mono tabular-nums ${
+                      secondsLeft > 120
+                        ? "text-green-700"
+                        : secondsLeft > 60
+                          ? "text-yellow-600"
+                          : "text-red-600"
+                    }`}
+                  >
+                    {formatCountdown(secondsLeft)}
+                  </span>{" "}
+                  remaining
+                </span>
+              </div>
             </div>
           </motion.div>
         )}
@@ -425,30 +588,40 @@ export default function OrderTrackingPage() {
 
       {/* Expired state */}
       <AnimatePresence>
-        {isPending && isExpired && (
+        {isBackendExpired && (
           <motion.div
             key="expired"
             initial={{ opacity: 0, scale: 0.97 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="mx-4 mt-4 p-5 bg-red-50 border border-red-200 rounded-2xl text-center"
+            className="mx-4 mt-4 p-6 bg-red-50 border border-red-200 rounded-2xl text-center"
             data-ocid="tracking.expired.error_state"
           >
-            <p className="text-3xl mb-2">❌</p>
+            <p className="text-4xl mb-3">❌</p>
             <p className="font-bold text-red-800 text-base">
               No vendor accepted your order.
             </p>
-            <p className="text-sm text-red-600 mt-1">Try again.</p>
-            <div className="flex gap-3 justify-center mt-4">
+            <p className="text-sm text-red-600 mt-1 mb-4">
+              Please try ordering again.
+            </p>
+            <div className="flex gap-3 justify-center">
               <Button
                 size="sm"
                 onClick={() => {
-                  if (order?.storeId) {
-                    navigate("store-detail");
-                  } else {
-                    navigate("store-list");
+                  if (order?.items) {
+                    for (const item of order.items) {
+                      addItem(
+                        {
+                          id: item.productId,
+                          name: item.name,
+                          price: item.price,
+                        },
+                        order.storeId,
+                      );
+                    }
                   }
+                  navigate({ to: "/customer/cart" });
                 }}
-                className="bg-primary hover:bg-primary/90 text-primary-foreground gap-1.5"
+                className="bg-green-600 hover:bg-green-700 text-white gap-1.5"
                 data-ocid="tracking.reorder.button"
               >
                 🔄 Reorder
@@ -456,7 +629,7 @@ export default function OrderTrackingPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => navigate("customer-dashboard")}
+                onClick={() => navigate({ to: "/customer" })}
                 className="border-red-200 text-red-700 hover:bg-red-50"
                 data-ocid="tracking.back_home.button"
               >
@@ -472,18 +645,18 @@ export default function OrderTrackingPage() {
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mx-4 mt-4 p-4 bg-green-50 border border-green-200 rounded-xl text-center"
+          className="mx-4 mt-4 p-5 bg-green-50 border border-green-200 rounded-2xl text-center"
           data-ocid="tracking.delivered.success_state"
         >
-          <p className="text-2xl mb-1">🎉</p>
-          <p className="font-bold text-green-800 text-base">Order Delivered!</p>
-          <p className="text-xs text-green-600 mt-0.5">
-            Your order has been delivered successfully.
+          <p className="text-3xl mb-2">🎉</p>
+          <p className="font-bold text-green-800 text-lg">Order Delivered!</p>
+          <p className="text-sm text-green-600 mt-1">
+            ✓ Delivered! Thank you for ordering with Riva
           </p>
           <Button
             size="sm"
-            onClick={() => navigate("customer-dashboard")}
-            className="mt-3 bg-green-600 hover:bg-green-700 text-white"
+            onClick={() => navigate({ to: "/customer" })}
+            className="mt-4 bg-green-600 hover:bg-green-700 text-white"
             data-ocid="tracking.back_home.button"
           >
             Back to Dashboard
@@ -491,8 +664,8 @@ export default function OrderTrackingPage() {
         </motion.div>
       )}
 
-      {/* Status banner (non-expired, non-delivered) */}
-      {!isDelivered && !(isPending && isExpired) && (
+      {/* Status banner (active orders) — only for non-pending, non-expired states */}
+      {!isDelivered && !isBackendExpired && !isPending && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -505,7 +678,7 @@ export default function OrderTrackingPage() {
               className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3"
               data-ocid="tracking.waiting.panel"
             >
-              <span className="text-xl">📦</span>
+              <span className="text-2xl">📦</span>
               <div>
                 <p className="text-sm font-bold text-amber-800">
                   Waiting for rider...
@@ -521,12 +694,12 @@ export default function OrderTrackingPage() {
               data-ocid="tracking.status.panel"
             >
               <p className="text-sm font-bold text-orange-800">
-                🚴 Rider is on the way
+                🚴 Out for delivery
               </p>
               {etaMinutes !== null && (
                 <p className="text-xs font-semibold text-orange-700 flex items-center gap-1">
-                  <Navigation className="w-3 h-3" />
-                  ⏱️ Arriving in {etaMinutes} min{etaMinutes !== 1 ? "s" : ""}
+                  <Navigation className="w-3 h-3" />~{etaMinutes} min
+                  {etaMinutes !== 1 ? "s" : ""} away
                 </p>
               )}
             </div>
@@ -534,24 +707,23 @@ export default function OrderTrackingPage() {
         </motion.div>
       )}
 
-      {/* Map — hide when expired */}
-      {!(isPending && isExpired) && (
+      {/* Map */}
+      {showMap && (
         <>
           <div className="mx-4 mt-4 rounded-xl overflow-hidden border border-border shadow-sm">
             {!leafletReady ? (
               <div
                 className="w-full flex items-center justify-center bg-muted"
-                style={{ height: 360 }}
+                style={{ height: 320 }}
               >
                 <p className="text-sm text-muted-foreground">Loading map...</p>
               </div>
             ) : (
-              <div id="tracking-map" style={{ width: "100%", height: 360 }} />
+              <div id="tracking-map" style={{ width: "100%", height: 320 }} />
             )}
           </div>
 
-          {/* Legend */}
-          <div className="mx-4 mt-3 mb-6 flex items-center justify-center gap-5 text-xs text-muted-foreground">
+          <div className="mx-4 mt-2 mb-4 flex items-center justify-center gap-5 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
               <MapPin className="w-3 h-3 text-green-600" />🏪 Store
             </span>
@@ -563,6 +735,65 @@ export default function OrderTrackingPage() {
             </span>
           </div>
         </>
+      )}
+
+      {/* Order details */}
+      {order && (
+        <div className="mx-4 mb-6 bg-card border border-border rounded-xl p-4 space-y-3">
+          <p className="text-xs font-bold text-muted-foreground uppercase tracking-wide">
+            Order Details
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge
+              variant="outline"
+              className="text-xs bg-muted text-muted-foreground"
+            >
+              #{order.id}
+            </Badge>
+            <span className="text-sm text-foreground font-medium">
+              ₹{order.totalAmount}
+            </span>
+          </div>
+          {order.customerName && (
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-muted-foreground">Name:</span>{" "}
+                <span className="font-semibold text-foreground">
+                  {order.customerName}
+                </span>
+              </div>
+              {order.customerPhone && (
+                <div>
+                  <span className="text-muted-foreground">Phone:</span>{" "}
+                  <a
+                    href={`tel:${order.customerPhone}`}
+                    className="font-semibold text-primary"
+                  >
+                    {order.customerPhone}
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+          {order.address && (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">Address:</span>{" "}
+              {order.address}
+            </p>
+          )}
+          {order.pinnedLatitude && order.pinnedLongitude && (
+            <a
+              href={`https://www.google.com/maps/dir/?api=1&destination=${order.pinnedLatitude},${order.pinnedLongitude}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-xs text-blue-600 font-semibold hover:underline"
+              data-ocid="tracking.navigate.link"
+            >
+              <Navigation className="w-3 h-3" />
+              View on Google Maps
+            </a>
+          )}
+        </div>
       )}
     </div>
   );

@@ -11,6 +11,7 @@ export function formatCountdown(seconds: number): string {
 export function useOrderCountdown(orderId: string | null): {
   secondsLeft: number;
   isExpired: boolean;
+  hasTimestamp: boolean;
 } {
   const [secondsLeft, setSecondsLeft] = useState<number>(() => {
     if (!orderId) return 0;
@@ -19,11 +20,23 @@ export function useOrderCountdown(orderId: string | null): {
         localStorage.getItem("riva_order_timestamps") || "{}",
       );
       const createdAt = timestamps[orderId];
-      if (!createdAt) return 0;
+      if (!createdAt) return EXPIRY_MS / 1000; // no timestamp yet → full window
       const elapsed = Date.now() - createdAt;
       return Math.max(0, Math.floor((EXPIRY_MS - elapsed) / 1000));
     } catch {
-      return 0;
+      return EXPIRY_MS / 1000;
+    }
+  });
+
+  const [hasTimestamp, setHasTimestamp] = useState<boolean>(() => {
+    if (!orderId) return false;
+    try {
+      const timestamps: Record<string, number> = JSON.parse(
+        localStorage.getItem("riva_order_timestamps") || "{}",
+      );
+      return !!timestamps[orderId];
+    } catch {
+      return false;
     }
   });
 
@@ -37,13 +50,16 @@ export function useOrderCountdown(orderId: string | null): {
         );
         const createdAt = timestamps[orderId];
         if (!createdAt) {
-          setSecondsLeft(0);
+          // Timestamp not yet written — treat as full window remaining, not expired
+          setHasTimestamp(false);
+          setSecondsLeft(EXPIRY_MS / 1000);
           return;
         }
+        setHasTimestamp(true);
         const elapsed = Date.now() - createdAt;
         setSecondsLeft(Math.max(0, Math.floor((EXPIRY_MS - elapsed) / 1000)));
       } catch {
-        setSecondsLeft(0);
+        setSecondsLeft(EXPIRY_MS / 1000);
       }
     };
 
@@ -52,5 +68,10 @@ export function useOrderCountdown(orderId: string | null): {
     return () => clearInterval(interval);
   }, [orderId]);
 
-  return { secondsLeft, isExpired: secondsLeft === 0 };
+  // isExpired is only true when a timestamp was found AND the window elapsed
+  return {
+    secondsLeft,
+    hasTimestamp,
+    isExpired: hasTimestamp && secondsLeft === 0,
+  };
 }

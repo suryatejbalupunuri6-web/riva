@@ -8,23 +8,23 @@ export interface None {
 }
 export type Option<T> = Some<T> | None;
 export interface Store {
+    id: string;
+    categories: Array<string>;
     latitude: number;
-    storeId: bigint;
     name: string;
     createdAt: bigint;
     description: string;
     isOpen: boolean;
     deliveryTime: string;
+    imageUrl: string;
     longitude: number;
     vendorId: Principal;
-    category: string;
     rating: number;
-    image: string;
 }
 export interface DeliveryLocation {
     lat: number;
     lng: number;
-    orderId: bigint;
+    orderId: string;
     partnerId: Principal;
     updatedAt: bigint;
 }
@@ -32,28 +32,39 @@ export interface ResetLog {
     timestamp: bigint;
     caller: Principal;
 }
+export interface OrderItem {
+    name: string;
+    productId: string;
+    imageUrl: string;
+    quantity: bigint;
+    price: number;
+}
 export interface Order {
-    id: bigint;
+    id: string;
     customerName: string;
     status: OrderStatus;
+    deliveryFee: number;
     customerPhone: string;
-    storeId: bigint;
+    storeId: string;
     createdAt: bigint;
     pinnedLongitude: number;
     pinnedLatitude: number;
-    customerAddress: string;
-    totalAmount?: number;
-    itemName: string;
+    totalAmount: number;
+    address: string;
     customerId: Principal;
+    items: Array<OrderItem>;
 }
 export interface Product {
-    storeId: bigint;
+    id: string;
+    originalPrice: number;
+    storeId: string;
     name: string;
     createdAt: bigint;
+    sellingPrice: number;
     description: string;
-    productId: bigint;
+    imageUrl: string;
     vendorId: Principal;
-    image: string;
+    category: string;
     price: number;
 }
 export interface UserProfile {
@@ -66,6 +77,7 @@ export interface UserProfile {
 export enum OrderStatus {
     riderAssigned = "riderAssigned",
     requested = "requested",
+    expired = "expired",
     storeConfirmed = "storeConfirmed",
     pickedUp = "pickedUp",
     delivered = "delivered"
@@ -77,12 +89,12 @@ export enum UserRole {
     deliveryP = "deliveryP"
 }
 export interface backendInterface {
-    addProduct(storeId: bigint, name: string, description: string, price: number, image: string): Promise<bigint>;
-    clearDeliveryLocation(orderId: bigint): Promise<void>;
-    createOrder(storeId: bigint, itemName: string, customerName: string, customerPhone: string, customerAddress: string, pinnedLatitude: number, pinnedLongitude: number, totalAmount: number): Promise<bigint>;
-    createStore(name: string, image: string, category: string, description: string, deliveryTime: string, latitude: number, longitude: number): Promise<bigint>;
+    addProduct(storeId: string, name: string, description: string, price: number, imageUrl: string, originalPrice: number, sellingPrice: number, category: string): Promise<string>;
+    clearDeliveryLocation(orderId: string): Promise<void>;
+    createOrder(storeId: string, items: Array<OrderItem>, customerName: string, customerPhone: string, address: string, pinnedLatitude: number, pinnedLongitude: number, totalAmount: number, deliveryFee: number): Promise<string>;
+    createStore(name: string, imageUrl: string, categories: Array<string>, description: string, deliveryTime: string, latitude: number, longitude: number): Promise<string>;
     createUserProfile(phone: string, name: string, role: UserRole): Promise<void>;
-    deleteProduct(productId: bigint): Promise<void>;
+    deleteProduct(productId: string): Promise<void>;
     generateOtp(phone: string): Promise<string>;
     getAllCustomers(): Promise<Array<UserProfile>>;
     getAllOrders(): Promise<Array<Order>>;
@@ -91,32 +103,36 @@ export interface backendInterface {
     getAllUsers(): Promise<Array<UserProfile>>;
     getAllVendors(): Promise<Array<UserProfile>>;
     getCallerUserProfile(): Promise<UserProfile | null>;
-    getDeliveryLocation(orderId: bigint): Promise<DeliveryLocation | null>;
-    getOrderById(orderId: bigint): Promise<Order | null>;
-    getOrderStatus(orderId: bigint): Promise<OrderStatus | null>;
+    getDeliveryLocation(orderId: string): Promise<DeliveryLocation | null>;
+    getOrderById(orderId: string): Promise<Order | null>;
+    getOrderStatus(orderId: string): Promise<OrderStatus | null>;
     getOrdersByCustomer(customer: Principal): Promise<Array<Order>>;
     getOrdersByStatus(status: OrderStatus): Promise<Array<Order>>;
-    getOrdersByStore(storeId: bigint): Promise<Array<Order>>;
+    getOrdersByStore(storeId: string): Promise<Array<Order>>;
+    getProductsByCategory(category: string): Promise<Array<Product>>;
+    getProductsByStore(storeId: string): Promise<Array<Product>>;
     getProductsByVendor(vendorId: Principal): Promise<Array<Product>>;
     getResetLogs(): Promise<Array<ResetLog>>;
-    getStoreById(storeId: bigint): Promise<Store | null>;
+    getStoreById(storeId: string): Promise<Store | null>;
     getStoreByVendor(vendorId: Principal): Promise<Store | null>;
+    getStoresByVendor(vendorId: Principal): Promise<Array<Store>>;
     getUserProfile(user: Principal): Promise<UserProfile | null>;
-    getVendorAnalytics(storeId: bigint, startDate: bigint, endDate: bigint): Promise<{
+    getVendorAnalytics(storeId: string, startDate: bigint, endDate: bigint): Promise<{
         totalOrders: bigint;
+        pendingOrders: bigint;
         totalEarnings: number;
         avgOrderValue: number;
         todayOrders: bigint;
     }>;
-    getVendorEarningsByDay(storeId: bigint, startDate: bigint, endDate: bigint): Promise<Array<{
+    getVendorEarningsByDay(storeId: string, startDate: bigint, endDate: bigint): Promise<Array<{
         date: string;
         earnings: number;
     }>>;
-    getVendorPeakHour(storeId: bigint, startDate: bigint, endDate: bigint): Promise<{
+    getVendorPeakHour(storeId: string, startDate: bigint, endDate: bigint): Promise<{
         hourLabel: string;
         orderCount: bigint;
     }>;
-    getVendorTopProduct(storeId: bigint, startDate: bigint, endDate: bigint): Promise<{
+    getVendorTopProduct(storeId: string, startDate: bigint, endDate: bigint): Promise<{
         productName: string;
         unitsSold: bigint;
     }>;
@@ -124,12 +140,12 @@ export interface backendInterface {
     isNewUser(phone: string): Promise<boolean>;
     resetAllData(adminPassword: string, confirmation: string): Promise<string>;
     saveCallerUserProfile(profile: UserProfile): Promise<void>;
-    toggleStoreOpen(storeId: bigint): Promise<boolean>;
-    updateDeliveryLocation(orderId: bigint, lat: number, lng: number): Promise<void>;
-    updateOrderStatus(orderId: bigint, newStatus: OrderStatus): Promise<void>;
-    updateProduct(productId: bigint, name: string, description: string, price: number, image: string): Promise<void>;
-    updateStore(storeId: bigint, name: string, image: string, category: string, description: string, deliveryTime: string): Promise<void>;
-    updateStoreLocation(storeId: bigint, latitude: number, longitude: number): Promise<void>;
+    toggleStoreOpen(storeId: string): Promise<boolean>;
+    updateDeliveryLocation(orderId: string, lat: number, lng: number): Promise<void>;
+    updateOrderStatus(orderId: string, newStatus: OrderStatus): Promise<void>;
+    updateProduct(productId: string, name: string, description: string, price: number, imageUrl: string, originalPrice: number, sellingPrice: number, category: string): Promise<void>;
+    updateStore(storeId: string, name: string, imageUrl: string, categories: Array<string>, description: string, deliveryTime: string): Promise<void>;
+    updateStoreLocation(storeId: string, latitude: number, longitude: number): Promise<void>;
     updateUserRole(user: Principal, newRole: UserRole): Promise<void>;
     verifyOtp(phone: string, code: string): Promise<boolean>;
 }

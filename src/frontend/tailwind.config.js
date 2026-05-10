@@ -5,7 +5,9 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+        display: "var(--font-display)",
+        body: "var(--font-body)",
+        mono: "var(--font-mono)",
       },
       colors: {
         background: "oklch(var(--background) / <alpha-value>)",
@@ -75,6 +77,7 @@ export default {
       boxShadow: {
         card: "0 1px 3px 0 oklch(0 0 0 / 0.08), 0 1px 2px -1px oklch(0 0 0 / 0.06)",
         "card-hover": "0 4px 6px -1px oklch(0 0 0 / 0.10), 0 2px 4px -2px oklch(0 0 0 / 0.06)",
+        elevated: "0 10px 25px -5px oklch(0 0 0 / 0.1)",
       },
       keyframes: {
         "accordion-down": {
@@ -85,10 +88,20 @@ export default {
           from: { height: "var(--radix-accordion-content-height)" },
           to: { height: "0" },
         },
+        "fade-in": {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
+        "slide-in-bottom": {
+          "0%": { transform: "translateY(10px)", opacity: "0" },
+          "100%": { transform: "translateY(0)", opacity: "1" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "fade-in": "fade-in 0.3s ease-out",
+        "slide-in-bottom": "slide-in-bottom 0.3s ease-out",
       },
     },
   },

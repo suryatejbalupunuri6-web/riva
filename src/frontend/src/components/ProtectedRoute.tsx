@@ -1,9 +1,10 @@
 import { useState } from "react";
 import PasswordModal, { type DashboardRole } from "./PasswordModal";
 
+// Updated keys to match Riva branding
 const ACCESS_KEYS: Record<DashboardRole, string> = {
-  vendor: "vendorAccess",
-  delivery: "deliveryAccess",
+  vendor: "riva_vendor_access",
+  delivery: "riva_delivery_access",
 };
 
 function isAccessValid(key: string): boolean {

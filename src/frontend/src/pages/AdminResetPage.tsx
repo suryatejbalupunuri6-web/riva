@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import {
   CheckCircle2,
   Loader2,
@@ -10,7 +11,6 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useState } from "react";
-import { useApp } from "../context/AppContext";
 import { useActor } from "../hooks/useActor";
 
 const ADMIN_PASSWORD = "FLASHMART007";
@@ -47,7 +47,7 @@ function formatTimestamp(ts: bigint): string {
 }
 
 export default function AdminResetPage() {
-  const { navigate } = useApp();
+  const navigate = useNavigate();
   const { actor } = useActor();
   const [password, setPassword] = useState("");
   const [confirmText, setConfirmText] = useState("");
@@ -98,7 +98,7 @@ export default function AdminResetPage() {
       setSuccess("Reset successful");
       localStorage.clear();
       setTimeout(() => {
-        navigate("landing");
+        navigate({ to: "/" });
       }, 1500);
     } catch (err: unknown) {
       console.error("[AdminReset] Error:", err);
@@ -249,7 +249,7 @@ export default function AdminResetPage() {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => navigate("landing")}
+                onClick={() => navigate({ to: "/" })}
                 disabled={loading}
                 className="w-full"
                 data-ocid="admin.reset.cancel_button"

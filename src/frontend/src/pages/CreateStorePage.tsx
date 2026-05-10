@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,52 +10,64 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Loader2, MapPin, Store } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { ArrowLeft, Check, Loader2, MapPin, Store, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { ImageUploadField } from "../components/ImageUploadField";
+import { ImageUrlGenerator } from "../components/ImageUrlGenerator";
 import MapPickerModal from "../components/MapPickerModal";
 import { useApp } from "../context/AppContext";
 import { useCreateStore } from "../hooks/useQueries";
 import { GLOBAL_DELIVERY_ZONE, isPointInPolygon } from "../utils/geofence";
 
-const CATEGORIES = [
+export const UNIFIED_CATEGORIES = [
+  "Stationery",
   "Grocery",
-  "Snacks",
   "Fruits",
-  "Beverages",
-  "Bakery",
-  "Dairy",
-  "Electronics",
-  "Other",
+  "Fashion",
+  "Toys",
+] as const;
+
+const CATEGORY_ICONS: Record<string, string> = {
+  Stationery: "📚",
+  Grocery: "🛒",
+  Fruits: "🍎",
+  Fashion: "👗",
+  Toys: "🧸",
+};
+
+const DELIVERY_TIME_OPTIONS = [
+  "15-20 min",
+  "20-30 min",
+  "30-45 min",
+  "45-60 min",
 ];
 
 interface StoreForm {
   name: string;
   image: string;
-  category: string;
   description: string;
   deliveryTime: string;
 }
 
 interface FormErrors {
   name?: string;
-  category?: string;
+  categories?: string;
   deliveryTime?: string;
   location?: string;
 }
 
 export default function CreateStorePage() {
-  const { navigate } = useApp();
+  const navigate = useNavigate();
   const createStore = useCreateStore();
 
   const [form, setForm] = useState<StoreForm>({
     name: "",
     image: "",
-    category: "",
     description: "",
     deliveryTime: "",
   });
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [errors, setErrors] = useState<FormErrors>({});
   const [storeLocation, setStoreLocation] = useState<{
     lat: number;
@@ -71,10 +84,22 @@ export default function CreateStorePage() {
         )
       : null;
 
+  const toggleCategory = (cat: string) => {
+    setSelectedCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat],
+    );
+    setErrors((er) => ({ ...er, categories: undefined }));
+  };
+
+  const removeCategory = (cat: string) => {
+    setSelectedCategories((prev) => prev.filter((c) => c !== cat));
+  };
+
   const validate = (): boolean => {
     const e: FormErrors = {};
     if (!form.name.trim()) e.name = "Store name is required";
-    if (!form.category) e.category = "Please select a category";
+    if (selectedCategories.length === 0)
+      e.categories = "Please select at least one category";
     if (!form.deliveryTime.trim()) e.deliveryTime = "Delivery time is required";
     if (!storeLocation) {
       e.location = "Please select your store location on the map";
@@ -92,16 +117,16 @@ export default function CreateStorePage() {
       await createStore.mutateAsync({
         name: form.name.trim(),
         image: form.image.trim(),
-        category: form.category,
+        categories: selectedCategories,
         description: form.description.trim(),
         deliveryTime: form.deliveryTime.trim(),
         latitude: storeLocation.lat,
         longitude: storeLocation.lng,
       });
       toast.success("Store created successfully!");
-      navigate("vendor-dashboard");
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to create store.");
+      navigate({ to: "/vendor" });
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to create store.");
     }
   };
 
@@ -111,19 +136,19 @@ export default function CreateStorePage() {
       <div className="flex items-center gap-3 mb-6">
         <button
           type="button"
-          onClick={() => navigate("vendor-dashboard")}
-          className="flex items-center gap-1 text-sm font-semibold text-green-600 hover:text-green-700"
+          onClick={() => navigate({ to: "/vendor" })}
+          className="flex items-center gap-1 text-sm font-semibold text-primary hover:text-primary/80 transition-colors"
           data-ocid="create-store.back.button"
         >
           <ArrowLeft className="w-4 h-4" />
           Back
         </button>
         <div>
-          <h1 className="text-xl font-extrabold text-gray-900 flex items-center gap-2">
-            <Store className="w-5 h-5 text-green-500" />
+          <h1 className="text-xl font-extrabold text-foreground flex items-center gap-2">
+            <Store className="w-5 h-5 text-primary" />
             Create Your Store
           </h1>
-          <p className="text-xs text-gray-500 mt-0.5">
+          <p className="text-xs text-muted-foreground mt-0.5">
             Set up your store to start selling
           </p>
         </div>
@@ -132,8 +157,8 @@ export default function CreateStorePage() {
       <div className="space-y-4" data-ocid="create-store.panel">
         {/* Store Name */}
         <div>
-          <Label className="text-xs font-bold text-gray-700">
-            Store Name <span className="text-red-500">*</span>
+          <Label className="text-xs font-bold text-foreground">
+            Store Name <span className="text-destructive">*</span>
           </Label>
           <Input
             value={form.name}
@@ -142,14 +167,12 @@ export default function CreateStorePage() {
               setErrors((er) => ({ ...er, name: undefined }));
             }}
             placeholder="e.g. Fresh Farm Grocery"
-            className={`mt-1 text-sm ${
-              errors.name ? "border-red-400" : "border-gray-300"
-            }`}
+            className={`mt-1 text-sm ${errors.name ? "border-destructive" : ""}`}
             data-ocid="create-store.name.input"
           />
           {errors.name && (
             <p
-              className="text-xs text-red-500 mt-1"
+              className="text-xs text-destructive mt-1"
               data-ocid="create-store.name_error"
             >
               {errors.name}
@@ -157,64 +180,104 @@ export default function CreateStorePage() {
           )}
         </div>
 
-        {/* Category */}
+        {/* Categories — multi-select */}
         <div>
-          <Label className="text-xs font-bold text-gray-700">
-            Category <span className="text-red-500">*</span>
+          <Label className="text-xs font-bold text-foreground">
+            Categories <span className="text-destructive">*</span>
           </Label>
-          <Select
-            value={form.category}
-            onValueChange={(v) => {
-              setForm((f) => ({ ...f, category: v }));
-              setErrors((er) => ({ ...er, category: undefined }));
-            }}
+          <p className="text-[11px] text-muted-foreground mb-2 mt-0.5">
+            Select all categories your store sells in
+          </p>
+
+          {/* Category toggle buttons */}
+          <div
+            className="flex flex-wrap gap-2"
+            data-ocid="create-store.categories.list"
           >
-            <SelectTrigger
-              className={`mt-1 text-sm ${
-                errors.category ? "border-red-400" : "border-gray-300"
-              }`}
-              data-ocid="create-store.category.select"
-            >
-              <SelectValue placeholder="Select category" />
-            </SelectTrigger>
-            <SelectContent>
-              {CATEGORIES.map((cat) => (
-                <SelectItem key={cat} value={cat}>
+            {UNIFIED_CATEGORIES.map((cat) => {
+              const selected = selectedCategories.includes(cat);
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => toggleCategory(cat)}
+                  data-ocid={`create-store.category.${cat.toLowerCase()}`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border-2 transition-all ${
+                    selected
+                      ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                      : "bg-card text-foreground border-border hover:border-primary/60 hover:text-primary"
+                  }`}
+                >
+                  <span>{CATEGORY_ICONS[cat]}</span>
                   {cat}
-                </SelectItem>
+                  {selected && <Check className="w-3 h-3" />}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Selected tags */}
+          {selectedCategories.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2.5">
+              {selectedCategories.map((cat) => (
+                <Badge
+                  key={cat}
+                  className="gap-1 bg-primary/10 text-primary border border-primary/30 text-xs font-semibold pr-1"
+                >
+                  {CATEGORY_ICONS[cat]} {cat}
+                  <button
+                    type="button"
+                    onClick={() => removeCategory(cat)}
+                    className="ml-0.5 w-4 h-4 rounded-full hover:bg-primary/20 flex items-center justify-center"
+                    aria-label={`Remove ${cat}`}
+                    data-ocid={`create-store.category_remove.${cat.toLowerCase()}`}
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </Badge>
               ))}
-            </SelectContent>
-          </Select>
-          {errors.category && (
+            </div>
+          )}
+
+          {errors.categories && (
             <p
-              className="text-xs text-red-500 mt-1"
-              data-ocid="create-store.category_error"
+              className="text-xs text-destructive mt-1.5"
+              data-ocid="create-store.categories_error"
             >
-              {errors.category}
+              {errors.categories}
             </p>
           )}
         </div>
 
-        {/* Delivery Time */}
+        {/* Delivery Time — Dropdown */}
         <div>
-          <Label className="text-xs font-bold text-gray-700">
-            Delivery Time <span className="text-red-500">*</span>
+          <Label className="text-xs font-bold text-foreground">
+            Delivery Time <span className="text-destructive">*</span>
           </Label>
-          <Input
+          <Select
             value={form.deliveryTime}
-            onChange={(e) => {
-              setForm((f) => ({ ...f, deliveryTime: e.target.value }));
+            onValueChange={(v) => {
+              setForm((f) => ({ ...f, deliveryTime: v }));
               setErrors((er) => ({ ...er, deliveryTime: undefined }));
             }}
-            placeholder="e.g. 15-20 min"
-            className={`mt-1 text-sm ${
-              errors.deliveryTime ? "border-red-400" : "border-gray-300"
-            }`}
-            data-ocid="create-store.delivery-time.input"
-          />
+          >
+            <SelectTrigger
+              className={`mt-1 text-sm ${errors.deliveryTime ? "border-destructive" : ""}`}
+              data-ocid="create-store.delivery-time.select"
+            >
+              <SelectValue placeholder="Select delivery time" />
+            </SelectTrigger>
+            <SelectContent>
+              {DELIVERY_TIME_OPTIONS.map((opt) => (
+                <SelectItem key={opt} value={opt}>
+                  {opt}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {errors.deliveryTime && (
             <p
-              className="text-xs text-red-500 mt-1"
+              className="text-xs text-destructive mt-1"
               data-ocid="create-store.delivery_time_error"
             >
               {errors.deliveryTime}
@@ -224,7 +287,9 @@ export default function CreateStorePage() {
 
         {/* Description */}
         <div>
-          <Label className="text-xs font-bold text-gray-700">Description</Label>
+          <Label className="text-xs font-bold text-foreground">
+            Description
+          </Label>
           <Textarea
             value={form.description}
             onChange={(e) =>
@@ -232,22 +297,20 @@ export default function CreateStorePage() {
             }
             placeholder="Tell customers about your store..."
             rows={3}
-            className="mt-1 text-sm border-gray-300 resize-none"
+            className="mt-1 text-sm resize-none"
             data-ocid="create-store.description.textarea"
           />
         </div>
 
         {/* Store Location */}
         <div>
-          <Label className="text-xs font-bold text-gray-700">
-            Store Location <span className="text-red-500">*</span>
+          <Label className="text-xs font-bold text-foreground">
+            Store Location <span className="text-destructive">*</span>
           </Label>
-          <p className="text-[11px] text-gray-400 mb-2">
-            Pin your store on the map. Must be inside the service area. This
-            cannot be changed after creation.
+          <p className="text-[11px] text-muted-foreground mb-2">
+            Pin your store on the map. Must be inside the service area.
           </p>
 
-          {/* Pick / Change button */}
           {!storeLocation ? (
             <Button
               type="button"
@@ -258,8 +321,8 @@ export default function CreateStorePage() {
               }}
               className={`w-full h-11 text-sm font-bold border-2 rounded-xl flex items-center gap-2 ${
                 errors.location
-                  ? "border-red-400 text-red-600 hover:bg-red-50"
-                  : "border-green-400 text-green-700 hover:bg-green-50"
+                  ? "border-destructive text-destructive hover:bg-destructive/5"
+                  : "border-primary/50 text-primary hover:bg-primary/5"
               }`}
               data-ocid="create-store.location.open_modal_button"
             >
@@ -268,42 +331,39 @@ export default function CreateStorePage() {
             </Button>
           ) : (
             <div className="space-y-2">
-              {/* Coordinates display */}
-              <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
-                <MapPin className="w-4 h-4 text-gray-500 flex-shrink-0" />
-                <span className="text-xs text-gray-700 font-mono">
-                  📍 Location set: {storeLocation.lat.toFixed(5)},{" "}
+              <div className="flex items-center gap-2 bg-muted border border-border rounded-xl px-3 py-2.5">
+                <MapPin className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                <span className="text-xs text-foreground font-mono">
+                  📍 {storeLocation.lat.toFixed(5)},{" "}
                   {storeLocation.lng.toFixed(5)}
                 </span>
               </div>
 
-              {/* Inside / outside badge */}
               {locationInsideZone === true ? (
                 <div
-                  className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2"
+                  className="flex items-center gap-2 bg-primary/10 border border-primary/30 rounded-xl px-3 py-2"
                   data-ocid="create-store.location.success_state"
                 >
-                  <span className="text-xs font-bold text-green-700">
+                  <span className="text-xs font-bold text-primary">
                     ✅ Inside service area
                   </span>
                 </div>
               ) : (
                 <div
-                  className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2"
+                  className="flex items-center gap-2 bg-destructive/10 border border-destructive/30 rounded-xl px-3 py-2"
                   data-ocid="create-store.location.error_state"
                 >
-                  <span className="text-xs font-bold text-red-600">
-                    ❌ Outside service area — Store must be inside service area
+                  <span className="text-xs font-bold text-destructive">
+                    ❌ Outside service area — must be inside delivery zone
                   </span>
                 </div>
               )}
 
-              {/* Change location button */}
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => setMapOpen(true)}
-                className="w-full h-9 text-xs font-semibold border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-xl"
+                className="w-full h-9 text-xs font-semibold rounded-xl"
                 data-ocid="create-store.location.edit_button"
               >
                 <MapPin className="w-3.5 h-3.5 mr-1" />
@@ -314,7 +374,7 @@ export default function CreateStorePage() {
 
           {errors.location && (
             <p
-              className="text-xs text-red-500 mt-1.5"
+              className="text-xs text-destructive mt-1.5"
               data-ocid="create-store.location_error"
             >
               {errors.location}
@@ -324,14 +384,16 @@ export default function CreateStorePage() {
 
         {/* Store Image */}
         <div>
-          <Label className="text-xs font-bold text-gray-700">Store Image</Label>
-          <p className="text-[11px] text-gray-400 mb-1.5">
-            Optional — pick a photo from your gallery
+          <Label className="text-xs font-bold text-foreground">
+            Store Image
+          </Label>
+          <p className="text-[11px] text-muted-foreground mb-1.5">
+            Optional — paste a direct image URL
           </p>
-          <ImageUploadField
+          <ImageUrlGenerator
             value={form.image}
             onChange={(url) => setForm((f) => ({ ...f, image: url }))}
-            onError={(msg) => toast.error(msg)}
+            label="Store Image"
           />
         </div>
 
@@ -339,7 +401,8 @@ export default function CreateStorePage() {
         <Button
           onClick={handleSubmit}
           disabled={createStore.isPending}
-          className="w-full h-12 text-base font-extrabold bg-green-500 hover:bg-green-600 text-white rounded-xl shadow"
+          style={{ backgroundColor: "#16a34a" }}
+          className="w-full h-12 text-base font-extrabold text-white rounded-xl shadow hover:opacity-90 transition-opacity"
           data-ocid="create-store.submit_button"
         >
           {createStore.isPending ? (

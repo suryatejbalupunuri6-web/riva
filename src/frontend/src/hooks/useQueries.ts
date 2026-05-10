@@ -1,6 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { OrderStatus, Store, UserProfile } from "../backend";
+import type {
+  OrderItem,
+  OrderStatus,
+  Product,
+  Store,
+  UserProfile,
+} from "../backend";
 import { useActor } from "./useActor";
+
+/** Frontend alias — Product includes originalPrice and sellingPrice from backend */
+export type FrontendProduct = Product;
+
+// ── User / Auth Queries ────────────────────────────────────────────────────
 
 export function useCallerProfile() {
   const { actor, isFetching: actorFetching } = useActor();
@@ -20,6 +31,8 @@ export function useCallerProfile() {
     isFetched: !!actor && query.isFetched,
   };
 }
+
+// ── Order Queries ──────────────────────────────────────────────────────────
 
 export function useMyOrders(customerId: string | undefined) {
   const { actor, isFetching: actorFetching } = useActor();
@@ -78,25 +91,27 @@ export function useCreateOrder() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (params: {
-      storeId: bigint;
-      itemName: string;
+      storeId: string;
+      items: OrderItem[];
       customerName: string;
       customerPhone: string;
-      customerAddress: string;
+      address: string;
       pinnedLatitude: number;
       pinnedLongitude: number;
-      totalAmount?: number;
+      totalAmount: number;
+      deliveryFee: number;
     }) => {
       if (!actor) throw new Error("Backend not connected. Please try again.");
       return actor.createOrder(
         params.storeId,
-        params.itemName,
+        params.items,
         params.customerName,
         params.customerPhone,
-        params.customerAddress,
+        params.address,
         params.pinnedLatitude,
         params.pinnedLongitude,
-        params.totalAmount ?? 0,
+        params.totalAmount,
+        params.deliveryFee,
       );
     },
     onSuccess: () => {
@@ -115,7 +130,7 @@ export function useUpdateOrderStatus() {
       orderId,
       status,
     }: {
-      orderId: bigint;
+      orderId: string;
       status: OrderStatus;
     }) => {
       if (!actor) throw new Error("Backend not connected. Please try again.");
@@ -143,6 +158,8 @@ export function useIsCallerAdmin() {
   });
 }
 
+// ── Product Queries ────────────────────────────────────────────────────────
+
 export function useAllProducts() {
   const { actor, isFetching: actorFetching } = useActor();
   return useQuery({
@@ -152,7 +169,7 @@ export function useAllProducts() {
       return actor.getAllProducts();
     },
     enabled: !!actor && !actorFetching,
-    refetchInterval: 5_000,
+    refetchInterval: 10_000,
   });
 }
 
@@ -180,15 +197,30 @@ export function useAddProduct() {
       description,
       price,
       image,
+      originalPrice,
+      sellingPrice,
+      category,
     }: {
-      storeId: bigint;
+      storeId: string;
       name: string;
       description: string;
       price: number;
       image: string;
+      originalPrice: number;
+      sellingPrice: number;
+      category: string;
     }) => {
       if (!actor) throw new Error("Backend not connected. Please try again.");
-      return actor.addProduct(storeId, name, description, price, image);
+      return actor.addProduct(
+        storeId,
+        name,
+        description,
+        price,
+        image,
+        originalPrice,
+        sellingPrice,
+        category,
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["allProducts"] });
@@ -208,15 +240,30 @@ export function useUpdateProduct() {
       description,
       price,
       image,
+      originalPrice,
+      sellingPrice,
+      category,
     }: {
-      productId: bigint;
+      productId: string;
       name: string;
       description: string;
       price: number;
       image: string;
+      originalPrice: number;
+      sellingPrice: number;
+      category: string;
     }) => {
       if (!actor) throw new Error("Backend not connected. Please try again.");
-      return actor.updateProduct(productId, name, description, price, image);
+      return actor.updateProduct(
+        productId,
+        name,
+        description,
+        price,
+        image,
+        originalPrice,
+        sellingPrice,
+        category,
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["allProducts"] });
@@ -230,7 +277,7 @@ export function useDeleteProduct() {
   const { actor } = useActor();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (productId: bigint) => {
+    mutationFn: async (productId: string) => {
       if (!actor) throw new Error("Backend not connected. Please try again.");
       return actor.deleteProduct(productId);
     },
@@ -255,7 +302,7 @@ export function useAllStores() {
       return stores;
     },
     enabled: !!actor && !actorFetching,
-    refetchInterval: 10_000,
+    refetchInterval: 5_000,
   });
 }
 
@@ -278,10 +325,40 @@ export function useStoreByVendor(vendorId: string | undefined) {
   });
 }
 
-export function useStoreById(storeId: bigint | null) {
+export function useStoresByVendor(vendorId: string | undefined) {
+  const { actor, isFetching: actorFetching } = useActor();
+  return useQuery<Store[]>({
+    queryKey: ["storesByVendor", vendorId],
+    queryFn: async () => {
+      if (!actor || !vendorId) return [];
+      const { Principal } = await import("@dfinity/principal");
+      return actor.getStoresByVendor(Principal.fromText(vendorId));
+    },
+    enabled: !!actor && !actorFetching && !!vendorId,
+    retry: false,
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useOrdersByStore(storeId: string | undefined) {
+  const { actor, isFetching: actorFetching } = useActor();
+  return useQuery<import("../backend").Order[]>({
+    queryKey: ["ordersByStore", storeId],
+    queryFn: async () => {
+      if (!actor || !storeId) return [];
+      return actor.getOrdersByStore(storeId);
+    },
+    enabled: !!actor && !actorFetching && !!storeId,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useStoreById(storeId: string | null) {
   const { actor, isFetching: actorFetching } = useActor();
   return useQuery<Store | null>({
-    queryKey: ["storeById", storeId?.toString()],
+    queryKey: ["storeById", storeId],
     queryFn: async () => {
       if (!actor || storeId === null) return null;
       return actor.getStoreById(storeId);
@@ -297,7 +374,7 @@ export function useCreateStore() {
     mutationFn: async (params: {
       name: string;
       image: string;
-      category: string;
+      categories: string[];
       description: string;
       deliveryTime: string;
       latitude: number;
@@ -308,7 +385,7 @@ export function useCreateStore() {
       const storeId = await actor.createStore(
         params.name,
         params.image,
-        params.category,
+        params.categories,
         params.description,
         params.deliveryTime,
         params.latitude,
@@ -324,6 +401,7 @@ export function useCreateStore() {
       );
       queryClient.invalidateQueries({ queryKey: ["allStores"] });
       queryClient.invalidateQueries({ queryKey: ["storeByVendor"] });
+      queryClient.invalidateQueries({ queryKey: ["storesByVendor"] });
     },
     onError: (error) => {
       console.error("[createStore] Error:", error);
@@ -335,13 +413,14 @@ export function useToggleStoreOpen() {
   const { actor } = useActor();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (storeId: bigint) => {
+    mutationFn: async (storeId: string) => {
       if (!actor) throw new Error("Backend not connected. Please try again.");
       return actor.toggleStoreOpen(storeId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["allStores"] });
       queryClient.invalidateQueries({ queryKey: ["storeByVendor"] });
+      queryClient.invalidateQueries({ queryKey: ["storesByVendor"] });
       queryClient.invalidateQueries({ queryKey: ["storeById"] });
     },
   });
@@ -352,10 +431,10 @@ export function useUpdateStore() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (params: {
-      storeId: bigint;
+      storeId: string;
       name: string;
       image: string;
-      category: string;
+      categories: string[];
       description: string;
       deliveryTime: string;
     }) => {
@@ -364,7 +443,7 @@ export function useUpdateStore() {
         params.storeId,
         params.name,
         params.image,
-        params.category,
+        params.categories,
         params.description,
         params.deliveryTime,
       );
@@ -382,7 +461,7 @@ export function useUpdateStoreLocation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (params: {
-      storeId: bigint;
+      storeId: string;
       latitude: number;
       longitude: number;
     }) => {
@@ -401,31 +480,22 @@ export function useUpdateStoreLocation() {
   });
 }
 
-// setStoreDeliveryZone removed - using global delivery zone only
-
 // ── Delivery Location Queries ──────────────────────────────────────────────
 
 export interface DeliveryLocationResult {
-  orderId: bigint;
+  orderId: string;
   lat: number;
   lng: number;
   updatedAt: bigint;
 }
 
-export function useDeliveryLocation(orderId: bigint | null) {
+export function useDeliveryLocation(orderId: string | null) {
   const { actor, isFetching: actorFetching } = useActor();
   return useQuery<DeliveryLocationResult | null>({
-    queryKey: ["deliveryLocation", orderId?.toString()],
+    queryKey: ["deliveryLocation", orderId],
     queryFn: async () => {
       if (!actor || orderId === null) return null;
-      // Backend returns ?DeliveryLocation (Candid Option).
-      // The JS/TS binding may decode this as:
-      //   - null / undefined   → None
-      //   - [DeliveryLocation] → Some  (array wrapper from Candid)
-      //   - DeliveryLocation   → Some  (direct object, some bindings)
-      // We handle all three variants so the hook is robust regardless of
-      // which binding version the deployed canister uses.
-      console.log("TRACKING orderId (customer poll):", orderId.toString());
+      console.log("TRACKING orderId (customer poll):", orderId);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await (actor as any).getDeliveryLocation(orderId);
       // None case
@@ -435,7 +505,7 @@ export function useDeliveryLocation(orderId: bigint | null) {
         if (result.length === 0) return null;
         const raw = result[0];
         return {
-          orderId: BigInt(raw.orderId ?? orderId),
+          orderId: String(raw.orderId ?? orderId),
           lat: Number(raw.lat),
           lng: Number(raw.lng),
           updatedAt: BigInt(raw.updatedAt ?? 0n),
@@ -443,7 +513,7 @@ export function useDeliveryLocation(orderId: bigint | null) {
       }
       // Direct object (Some without array wrapper)
       return {
-        orderId: BigInt(result.orderId ?? orderId),
+        orderId: String(result.orderId ?? orderId),
         lat: Number(result.lat),
         lng: Number(result.lng),
         updatedAt: BigInt(result.updatedAt ?? 0n),
@@ -463,8 +533,7 @@ export function useResetAllData() {
   return useMutation({
     mutationFn: async (adminPassword: string) => {
       if (!actor) throw new Error("Backend not connected. Please try again.");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (actor as any).resetAllData(adminPassword) as Promise<string>;
+      return actor.resetAllData(adminPassword, "RESET");
     },
     onSuccess: () => {
       // Invalidate all queries so UI reflects fresh state

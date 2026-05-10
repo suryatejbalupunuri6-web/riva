@@ -6,7 +6,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Bell, BellOff, Check, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   type AppNotification,
   useNotifications,
@@ -45,16 +45,61 @@ const TYPE_STYLES: Record<
   system: { border: "border-l-blue-500", dot: "bg-blue-500", bg: "bg-blue-50" },
 };
 
+// Sound helper — played after first user interaction to respect autoplay policy
+let userInteracted = false;
+if (typeof window !== "undefined") {
+  const markInteraction = () => {
+    userInteracted = true;
+  };
+  window.addEventListener("click", markInteraction, { once: true });
+  window.addEventListener("touchstart", markInteraction, { once: true });
+}
+
+function playNotifSound() {
+  if (!userInteracted) return;
+  try {
+    const ctx = new (
+      window.AudioContext ||
+      (window as Window & { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext
+    )();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.3);
+  } catch {
+    // silently ignore if audio API is unavailable
+  }
+}
+
 export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const { notifications, unreadCount, markRead, markAllRead, clearAll } =
     useNotifications();
+  const prevCountRef = useRef(notifications.length);
+
+  // Play sound when a new notification arrives (after user has interacted)
+  useEffect(() => {
+    if (notifications.length > prevCountRef.current) {
+      playNotifSound();
+    }
+    prevCountRef.current = notifications.length;
+  }, [notifications.length]);
 
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          userInteracted = true; // mark interaction on bell click
+          setOpen(true);
+        }}
         className="relative p-1.5 rounded-md hover:bg-muted transition-colors"
         aria-label="Notifications"
         data-ocid="header.notifications.button"
@@ -132,7 +177,7 @@ export default function NotificationBell() {
               </div>
             ) : (
               <div className="divide-y divide-border">
-                {notifications.map((notif, idx) => {
+                {notifications.slice(0, 20).map((notif, idx) => {
                   const styles = TYPE_STYLES[notif.type];
                   return (
                     <button
@@ -140,7 +185,7 @@ export default function NotificationBell() {
                       key={notif.id}
                       onClick={() => markRead(notif.id)}
                       className={`w-full text-left px-4 py-3 border-l-4 ${styles.border} transition-colors hover:bg-muted/50 ${
-                        notif.read ? "opacity-70" : ""
+                        notif.read ? "opacity-60" : ""
                       }`}
                       data-ocid={`notifications.item.${idx + 1}`}
                     >

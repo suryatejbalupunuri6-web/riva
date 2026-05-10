@@ -1,4 +1,4 @@
-import type { Product } from "../backend";
+import type { Product, Store } from "../backend";
 
 // ─────────────────────────────────────────────
 // Internal NLP-style query parser
@@ -90,6 +90,8 @@ const CATEGORY_KEYWORDS: Record<string, string[]> = {
     "staple",
     "basic",
     "essential",
+    "atta",
+    "spices",
   ],
   personal_care: [
     "soap",
@@ -101,6 +103,32 @@ const CATEGORY_KEYWORDS: Record<string, string[]> = {
     "lotion",
     "hygiene",
   ],
+  stationery: [
+    "pen",
+    "pencil",
+    "notebook",
+    "marker",
+    "eraser",
+    "geometry",
+    "stationery",
+    "book",
+    "school",
+  ],
+  noodles: ["noodles", "pasta", "instant", "maggi"],
+};
+
+// Brand → associated product keywords
+export const BRAND_KEYWORDS: Record<string, string[]> = {
+  doms: ["pencils", "pens", "stationery", "markers", "geometry box"],
+  classmate: ["notebooks", "pens", "stationery", "books"],
+  heritage: ["milk", "dairy", "curd", "ghee", "paneer"],
+  amul: ["milk", "butter", "cheese", "ice cream", "dairy"],
+  parle: ["biscuits", "snacks", "glucose biscuits"],
+  britannia: ["biscuits", "bread", "cakes", "dairy"],
+  lays: ["chips", "snacks", "crisps"],
+  maggi: ["noodles", "instant food", "pasta"],
+  tata: ["salt", "tea", "staples"],
+  aashirvaad: ["flour", "atta", "spices"],
 };
 
 const PRICE_PATTERNS = [
@@ -133,6 +161,7 @@ export interface ParsedQuery {
   isCheap: boolean;
   isPremium: boolean;
   rawQuery: string;
+  matchedBrands: string[];
 }
 
 export function parseQuery(query: string): ParsedQuery {
@@ -153,7 +182,15 @@ export function parseQuery(query: string): ParsedQuery {
 
   const isCheap = CHEAP_WORDS.some((w) => lower.includes(w));
   const isPremium = PREMIUM_WORDS.some((w) => lower.includes(w));
-  if (isCheap && maxPrice === null) maxPrice = 100; // default cheap threshold
+  if (isCheap && maxPrice === null) maxPrice = 100;
+
+  // Match brands (case-insensitive)
+  const matchedBrands: string[] = [];
+  for (const brand of Object.keys(BRAND_KEYWORDS)) {
+    if (words.some((w) => w.includes(brand) || brand.includes(w))) {
+      matchedBrands.push(brand);
+    }
+  }
 
   // Match categories
   const matchedCategories: string[] = [];
@@ -196,11 +233,16 @@ export function parseQuery(query: string): ParsedQuery {
     isCheap,
     isPremium,
     rawQuery: query,
+    matchedBrands,
   };
 }
 
-export function scoreProduct(product: Product, parsed: ParsedQuery): number {
-  if (!parsed.rawQuery.trim()) return 1; // no query = show all
+export function scoreProduct(
+  product: Product,
+  parsed: ParsedQuery,
+  stores?: Store[],
+): number {
+  if (!parsed.rawQuery.trim()) return 1;
 
   const name = product.name.toLowerCase();
   const desc = (product.description || "").toLowerCase();
@@ -233,6 +275,21 @@ export function scoreProduct(product: Product, parsed: ParsedQuery): number {
     }
   }
 
+  // Brand boost
+  for (const brand of parsed.matchedBrands) {
+    // Exact brand name in product name
+    if (name.includes(brand)) {
+      score += 20;
+    }
+    // Brand's associated categories match product
+    const brandKeywords = BRAND_KEYWORDS[brand] || [];
+    const categoryMatch = brandKeywords.some(
+      (kw) =>
+        name.includes(kw.toLowerCase()) || desc.includes(kw.toLowerCase()),
+    );
+    if (categoryMatch) score += 8;
+  }
+
   // Cheap boost: lower price = higher score
   if (parsed.isCheap) {
     score += Math.max(0, 5 - price / 20);
@@ -241,18 +298,39 @@ export function scoreProduct(product: Product, parsed: ParsedQuery): number {
   // Exact partial name match bonus
   if (name.includes(parsed.rawQuery.toLowerCase())) score += 15;
 
+  // Store rating bonus: products from higher-rated stores rank higher
+  if (stores && stores.length > 0) {
+    const store = stores.find((s) => s.id === product.storeId);
+    if (store) {
+      score += Math.floor(store.rating * 2);
+    }
+  }
+
   return score;
 }
 
 export function filterAndRankProducts(
   products: Product[],
   query: string,
+  stores?: Store[],
 ): Product[] {
-  if (!query.trim()) return products;
+  if (!query.trim()) {
+    // When no query, sort by store rating descending
+    if (stores && stores.length > 0) {
+      const ratingMap = new Map<string, number>();
+      for (const s of stores) ratingMap.set(s.id, s.rating);
+      return [...products].sort((a, b) => {
+        const ra = ratingMap.get(a.storeId) ?? 0;
+        const rb = ratingMap.get(b.storeId) ?? 0;
+        return rb - ra;
+      });
+    }
+    return products;
+  }
 
   const parsed = parseQuery(query);
   const scored = products
-    .map((p) => ({ product: p, score: scoreProduct(p, parsed) }))
+    .map((p) => ({ product: p, score: scoreProduct(p, parsed, stores) }))
     .filter(({ score }) => score > 0);
 
   scored.sort((a, b) => b.score - a.score);
@@ -260,7 +338,7 @@ export function filterAndRankProducts(
 }
 
 export function getSuggestions(products: Product[], query: string): string[] {
-  if (!query.trim() || query.length < 2) return [];
+  if (!query.trim() || query.length < 1) return [];
   const lower = query.toLowerCase();
   const names = products
     .filter((p) => p.name.toLowerCase().includes(lower))
@@ -307,7 +385,6 @@ export function clearRecentSearches(): void {
 // ─────────────────────────────────────────────
 // Store search utilities
 // ─────────────────────────────────────────────
-import type { Store } from "../backend";
 
 const FAST_DELIVERY_WORDS = [
   "fast",
@@ -322,7 +399,7 @@ const FAST_DELIVERY_WORDS = [
 export function scoreStore(store: Store, parsed: ParsedQuery): number {
   if (!parsed.rawQuery.trim()) return 1;
   const name = store.name.toLowerCase();
-  const cat = store.category.toLowerCase();
+  const cat = (store.categories?.[0] ?? "").toLowerCase();
   const desc = store.description.toLowerCase();
   const delivery = store.deliveryTime.toLowerCase();
   let score = 0;
@@ -374,18 +451,40 @@ export function filterAndRankStores(stores: Store[], query: string): Store[] {
   return scored.map(({ store }) => store);
 }
 
+/**
+ * Returns top 5 suggestions from 3 sources (in priority order):
+ * 1. Direct product name matches
+ * 2. Brand keyword expansions
+ * 3. Category keywords + store names
+ */
 export function getGlobalSuggestions(
   products: Product[],
   stores: Store[],
   query: string,
 ): string[] {
-  if (!query.trim() || query.length < 2) return [];
+  if (!query.trim() || query.length < 1) return [];
   const lower = query.toLowerCase();
+
+  // 1. Direct product name matches
   const productNames = products
     .filter((p) => p.name.toLowerCase().includes(lower))
     .map((p) => p.name);
+
+  // 2. Brand keyword expansions
+  const brandSuggestions: string[] = [];
+  for (const [brand, keywords] of Object.entries(BRAND_KEYWORDS)) {
+    if (brand.includes(lower) || lower.includes(brand)) {
+      brandSuggestions.push(...keywords);
+    }
+  }
+
+  // 3. Store names and category keywords
   const storeNames = stores
     .filter((s) => s.name.toLowerCase().includes(lower))
     .map((s) => s.name);
-  return [...new Set([...productNames, ...storeNames])].slice(0, 6);
+
+  const allSuggestions = [
+    ...new Set([...productNames, ...brandSuggestions, ...storeNames]),
+  ];
+  return allSuggestions.slice(0, 5);
 }

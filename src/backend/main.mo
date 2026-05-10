@@ -21,28 +21,40 @@ actor {
     #admin;
   };
 
+  // OrderItem represents a single cart line item stored in an order
+  public type OrderItem = {
+    productId : Text;
+    name : Text;
+    price : Float;
+    quantity : Nat;
+    imageUrl : Text;
+  };
+
   public type Product = {
-    productId : Int;
-    storeId : Int;
+    id : Text;
+    storeId : Text;
     name : Text;
     description : Text;
     price : Float;
-    image : Text;
+    imageUrl : Text;
     vendorId : Principal;
     createdAt : Int;
+    originalPrice : Float;
+    sellingPrice : Float;
+    category : Text;
   };
 
   module Product {
     public func compare(a : Product, b : Product) : Order.Order {
-      Int.compare(a.productId, b.productId);
+      Text.compare(a.id, b.id);
     };
   };
 
   public type Store = {
-    storeId : Int;
+    id : Text;
     name : Text;
-    image : Text;
-    category : Text;
+    imageUrl : Text;
+    categories : [Text];
     description : Text;
     deliveryTime : Text;
     vendorId : Principal;
@@ -73,35 +85,37 @@ actor {
     #riderAssigned;
     #pickedUp;
     #delivered;
+    #expired;
   };
 
   public type Order = {
-    id : Int;
-    storeId : Int;
-    itemName : Text;
+    id : Text;
+    storeId : Text;
+    items : [OrderItem];
     customerName : Text;
     customerPhone : Text;
-    customerAddress : Text;
+    address : Text;
     pinnedLatitude : Float;
     pinnedLongitude : Float;
     customerId : Principal;
     status : OrderStatus;
     createdAt : Int;
-    totalAmount : ?Float;
+    totalAmount : Float;
+    deliveryFee : Float;
   };
 
   public type DeliveryLocation = {
-    orderId : Int;
+    orderId : Text;
     lat : Float;
     lng : Float;
     updatedAt : Int;
     partnerId : Principal;
   };
+
   public type ResetLog = {
     timestamp : Int;
     caller : Principal;
   };
-
 
   module UserProfile {
     public func compare(p1 : UserProfile, p2 : UserProfile) : Order.Order {
@@ -109,17 +123,52 @@ actor {
     };
   };
 
-  // Storage
+  // Storage — keys are now Text IDs for Orders, Stores, Products
   let users = Map.empty<Principal, UserProfile>();
-  let stores = Map.empty<Int, Store>();
-  let products = Map.empty<Int, Product>();
+  let stores = Map.empty<Text, Store>();
+  let products = Map.empty<Text, Product>();
   let otps = Map.empty<Text, OTP>();
-  let orders = Map.empty<Int, Order>();
-  let deliveryLocations = Map.empty<Int, DeliveryLocation>();
+  let orders = Map.empty<Text, Order>();
+  let deliveryLocations = Map.empty<Text, DeliveryLocation>();
   var nextOrderId : Nat = 1;
   var nextProductId : Nat = 1;
   var nextStoreId : Nat = 1;
   var resetLogs : List.List<ResetLog> = List.empty();
+
+  // ==========================================
+  // EXPIRY CONSTANTS (nanoseconds)
+  // ==========================================
+  let FIVE_MINUTES_NS : Int = 5 * 60 * 1_000_000_000;
+  let EIGHT_MINUTES_NS : Int = 8 * 60 * 1_000_000_000;
+
+  // Lazily expire + delete orders older than threshold.
+  // MUST only be called from shared (update) functions, never from queries.
+  // Snapshots entries first to avoid mutating the map mid-iteration.
+  func expireOrders() {
+    let now = Time.now();
+    // Snapshot all entries into an array before mutating
+    let snapshot = orders.entries().toArray();
+    let toExpire = List.empty<Text>();
+    let toDelete = List.empty<Text>();
+    for ((ordId, o) in snapshot.values()) {
+      let age = now - o.createdAt;
+      if (o.status == #requested and age > FIVE_MINUTES_NS) {
+        toExpire.add(ordId);
+      };
+      if (o.status == #expired and age > EIGHT_MINUTES_NS) {
+        toDelete.add(ordId);
+      };
+    };
+    for (ordId in toExpire.values()) {
+      switch (orders.get(ordId)) {
+        case (?o) { orders.add(ordId, { o with status = #expired }) };
+        case null {};
+      };
+    };
+    for (ordId in toDelete.values()) {
+      orders.remove(ordId);
+    };
+  };
 
   func isAppAdmin(principal : Principal) : Bool {
     switch (users.get(principal)) {
@@ -139,8 +188,12 @@ actor {
     };
   };
 
-  // Public - no authentication required (OTP generation is public)
+  // ==========================================
+  // OTP — keep-alive safe: empty phone = no-op
+  // ==========================================
   public shared ({ caller }) func generateOtp(phone : Text) : async Text {
+    // Keep-alive ping: empty/sentinel phone returns dummy without storing anything
+    if (phone == "" or phone == "0000000000") { return "000000" };
     let t = Int.abs(Time.now());
     let raw = (t + phone.size()) % 900000;
     let code = (100000 + raw).toText();
@@ -153,7 +206,6 @@ actor {
     code;
   };
 
-  // Public - no authentication required (OTP verification is public)
   public shared ({ caller }) func verifyOtp(phone : Text, code : Text) : async Bool {
     switch (otps.get(phone)) {
       case (null) { false };
@@ -169,23 +221,24 @@ actor {
     };
   };
 
-  // 1. Store Management
-  public shared ({ caller }) func createStore(name : Text, image : Text, category : Text, description : Text, deliveryTime : Text, latitude : Float, longitude : Float) : async Int {
+  // ==========================================
+  // STORE MANAGEMENT
+  // ==========================================
+
+  public shared ({ caller }) func createStore(name : Text, imageUrl : Text, categories : [Text], description : Text, deliveryTime : Text, latitude : Float, longitude : Float) : async Text {
     if (not isRegisteredUser(caller)) {
       Runtime.trap("Unauthorized: Must be a registered user to create a store");
     };
 
-    let storeExists = stores.values().any(func(s) { s.vendorId == caller });
-    if (storeExists) { Runtime.trap("Store already exists") };
-
-    let storeId = nextStoreId;
+    let sid = nextStoreId;
     nextStoreId += 1;
+    let storeId = sid.toText();
 
-    let store = {
-      storeId;
+    let store : Store = {
+      id = storeId;
       name;
-      image;
-      category;
+      imageUrl;
+      categories;
       description;
       deliveryTime;
       vendorId = caller;
@@ -200,34 +253,19 @@ actor {
     storeId;
   };
 
-  public shared ({ caller }) func updateStore(storeId : Int, name : Text, image : Text, category : Text, description : Text, deliveryTime : Text) : async () {
+  public shared ({ caller }) func updateStore(storeId : Text, name : Text, imageUrl : Text, categories : [Text], description : Text, deliveryTime : Text) : async () {
     switch (stores.get(storeId)) {
       case (null) { Runtime.trap("Store not found") };
       case (?store) {
         if (store.vendorId != caller and not isAppAdmin(caller)) {
           Runtime.trap("Unauthorized: Can only update your own store");
         };
-        let updatedStore = {
-          storeId;
-          name;
-          image;
-          category;
-          description;
-          deliveryTime;
-          vendorId = store.vendorId;
-          isOpen = store.isOpen;
-          rating = store.rating;
-          createdAt = store.createdAt;
-          latitude = store.latitude;
-          longitude = store.longitude;
-        };
-        stores.add(storeId, updatedStore);
+        stores.add(storeId, { store with name; imageUrl; categories; description; deliveryTime });
       };
     };
   };
 
-  // Admin-only: update store location after creation
-  public shared ({ caller }) func updateStoreLocation(storeId : Int, latitude : Float, longitude : Float) : async () {
+  public shared ({ caller }) func updateStoreLocation(storeId : Text, latitude : Float, longitude : Float) : async () {
     if (not isAppAdmin(caller)) {
       Runtime.trap("Unauthorized: Only admins can update store location");
     };
@@ -239,29 +277,16 @@ actor {
     };
   };
 
-  public shared ({ caller }) func toggleStoreOpen(storeId : Int) : async Bool {
+  public shared ({ caller }) func toggleStoreOpen(storeId : Text) : async Bool {
     switch (stores.get(storeId)) {
       case (null) { Runtime.trap("Store not found") };
       case (?store) {
         if (store.vendorId != caller and not isAppAdmin(caller)) {
           Runtime.trap("Unauthorized: Can only toggle your own store");
         };
-        let updatedStore = {
-          storeId = store.storeId;
-          name = store.name;
-          image = store.image;
-          category = store.category;
-          description = store.description;
-          deliveryTime = store.deliveryTime;
-          vendorId = store.vendorId;
-          isOpen = not store.isOpen;
-          rating = store.rating;
-          createdAt = store.createdAt;
-          latitude = store.latitude;
-          longitude = store.longitude;
-        };
-        stores.add(storeId, updatedStore);
-        updatedStore.isOpen;
+        let updated = { store with isOpen = not store.isOpen };
+        stores.add(storeId, updated);
+        updated.isOpen;
       };
     };
   };
@@ -270,7 +295,11 @@ actor {
     stores.values().find(func(store) { store.vendorId == vendorId });
   };
 
-  public query ({ caller }) func getStoreById(storeId : Int) : async ?Store {
+  public query ({ caller }) func getStoresByVendor(vendorId : Principal) : async [Store] {
+    stores.values().filter(func(store) { store.vendorId == vendorId }).toArray();
+  };
+
+  public query ({ caller }) func getStoreById(storeId : Text) : async ?Store {
     stores.get(storeId);
   };
 
@@ -278,17 +307,14 @@ actor {
     stores.values().toArray();
   };
 
-  // User registration - requires verified OTP
+  // ==========================================
+  // USER MANAGEMENT
+  // ==========================================
+
+  // OTP verification requirement removed: Clerk handles phone verification on the frontend.
+  // The backend now trusts the authenticated Internet Identity caller directly.
   public shared ({ caller }) func createUserProfile(phone : Text, name : Text, role : UserRole) : async () {
-    switch (otps.get(phone)) {
-      case (null) { Runtime.trap("Unauthorized: OTP not found. Please generate OTP first") };
-      case (?otp) {
-        if (not otp.verified) {
-          Runtime.trap("Unauthorized: OTP not verified. Please verify OTP first");
-        };
-      };
-    };
-    let profile = { id = caller; phone; name; role = #customer; createdAt = Time.now() };
+    let profile : UserProfile = { id = caller; phone; name; role = #customer; createdAt = Time.now() };
     users.add(caller, profile);
   };
 
@@ -299,14 +325,7 @@ actor {
     switch (users.get(user)) {
       case (null) { Runtime.trap("User not found") };
       case (?profile) {
-        let updatedProfile = {
-          id = profile.id;
-          phone = profile.phone;
-          name = profile.name;
-          role = newRole;
-          createdAt = profile.createdAt;
-        };
-        users.add(user, updatedProfile);
+        users.add(user, { profile with role = newRole });
       };
     };
   };
@@ -344,31 +363,41 @@ actor {
     users.add(caller, profile);
   };
 
-  public shared ({ caller }) func createOrder(storeId : Int, itemName : Text, customerName : Text, customerPhone : Text, customerAddress : Text, pinnedLatitude : Float, pinnedLongitude : Float, totalAmount : Float) : async Int {
+  // ==========================================
+  // ORDER MANAGEMENT
+  // ==========================================
+
+  public shared ({ caller }) func createOrder(storeId : Text, items : [OrderItem], customerName : Text, customerPhone : Text, address : Text, pinnedLatitude : Float, pinnedLongitude : Float, totalAmount : Float, deliveryFee : Float) : async Text {
     if (not isRegisteredUser(caller)) {
       Runtime.trap("Unauthorized: Must be a registered user to create orders");
     };
-    let orderId = nextOrderId;
+    // Lazily expire old orders on each new order creation
+    expireOrders();
+    let oid = nextOrderId;
     nextOrderId += 1;
-    let order = {
+    let orderId = oid.toText();
+    let order : Order = {
       id = orderId;
       storeId;
-      itemName;
+      items;
       customerName;
       customerPhone;
-      customerAddress;
+      address;
       pinnedLatitude;
       pinnedLongitude;
       customerId = caller;
       status = #requested;
       createdAt = Time.now();
-      totalAmount = ?totalAmount;
+      totalAmount;
+      deliveryFee;
     };
     orders.add(orderId, order);
     orderId;
   };
 
-  public shared ({ caller }) func updateOrderStatus(orderId : Int, newStatus : OrderStatus) : async () {
+  public shared ({ caller }) func updateOrderStatus(orderId : Text, newStatus : OrderStatus) : async () {
+    // Lazily expire old orders
+    expireOrders();
     switch (orders.get(orderId)) {
       case (null) { Runtime.trap("Order not found") };
       case (?order) {
@@ -385,6 +414,7 @@ actor {
           case (#storeConfirmed, #riderAssigned) { isRegisteredCaller or isAdmin };
           case (#riderAssigned, #pickedUp) { isRegisteredCaller or isAdmin };
           case (#pickedUp, #delivered) { isRegisteredCaller or isAdmin };
+          case (_, #expired) { isAdmin or true }; // system/any can expire
           case (_, _) { isAdmin };
         };
 
@@ -392,26 +422,12 @@ actor {
           Runtime.trap("Unauthorized: Cannot update order status");
         };
 
-        let updatedOrder = {
-          id = order.id;
-          storeId = order.storeId;
-          itemName = order.itemName;
-          customerName = order.customerName;
-          customerPhone = order.customerPhone;
-          customerAddress = order.customerAddress;
-          pinnedLatitude = order.pinnedLatitude;
-          pinnedLongitude = order.pinnedLongitude;
-          customerId = order.customerId;
-          status = newStatus;
-          createdAt = order.createdAt;
-          totalAmount = order.totalAmount;
-        };
-        orders.add(orderId, updatedOrder);
+        orders.add(orderId, { order with status = newStatus });
       };
     };
   };
 
-  public query ({ caller }) func getOrderById(orderId : Int) : async ?Order {
+  public query ({ caller }) func getOrderById(orderId : Text) : async ?Order {
     switch (orders.get(orderId)) {
       case (null) { null };
       case (?order) {
@@ -432,14 +448,14 @@ actor {
     if (caller != customer and not isAppAdmin(caller)) {
       Runtime.trap("Unauthorized: Can only view your own orders");
     };
-    orders.values().toArray().filter(func(o) { o.customerId == customer });
+    orders.values().filter(func(o) { o.customerId == customer }).toArray();
   };
 
   public query ({ caller }) func getOrdersByStatus(status : OrderStatus) : async [Order] {
     if (not isRegisteredUser(caller) and not isAppAdmin(caller)) {
       Runtime.trap("Unauthorized: Must be a registered user to view orders");
     };
-    orders.values().toArray().filter(func(o) { o.status == status });
+    orders.values().filter(func(o) { o.status == status }).toArray();
   };
 
   public query ({ caller }) func getAllOrders() : async [Order] {
@@ -456,7 +472,7 @@ actor {
     users.values().toArray().sort();
   };
 
-  public query ({ caller }) func getOrderStatus(orderId : Int) : async ?OrderStatus {
+  public query ({ caller }) func getOrderStatus(orderId : Text) : async ?OrderStatus {
     switch (orders.get(orderId)) {
       case (null) { null };
       case (?order) {
@@ -473,8 +489,11 @@ actor {
     };
   };
 
-  // Product Management
-  public shared ({ caller }) func addProduct(storeId : Int, name : Text, description : Text, price : Float, image : Text) : async Int {
+  // ==========================================
+  // PRODUCT MANAGEMENT
+  // ==========================================
+
+  public shared ({ caller }) func addProduct(storeId : Text, name : Text, description : Text, price : Float, imageUrl : Text, originalPrice : Float, sellingPrice : Float, category : Text) : async Text {
     switch (stores.get(storeId)) {
       case (null) { Runtime.trap("Store not found") };
       case (?store) {
@@ -483,45 +502,39 @@ actor {
         };
       };
     };
-    let productId = nextProductId;
+    let pid = nextProductId;
     nextProductId += 1;
-    let product = {
-      productId;
+    let productId = pid.toText();
+    let product : Product = {
+      id = productId;
       storeId;
       name;
       description;
       price;
-      image;
+      imageUrl;
       vendorId = caller;
       createdAt = Time.now();
+      originalPrice;
+      sellingPrice;
+      category;
     };
     products.add(productId, product);
     productId;
   };
 
-  public shared ({ caller }) func updateProduct(productId : Int, name : Text, description : Text, price : Float, image : Text) : async () {
+  public shared ({ caller }) func updateProduct(productId : Text, name : Text, description : Text, price : Float, imageUrl : Text, originalPrice : Float, sellingPrice : Float, category : Text) : async () {
     switch (products.get(productId)) {
       case (null) { Runtime.trap("Product not found") };
       case (?product) {
         if (product.vendorId != caller and not isAppAdmin(caller)) {
           Runtime.trap("Unauthorized: Can only update your own products");
         };
-        let updatedProduct = {
-          productId;
-          storeId = product.storeId;
-          name;
-          description;
-          price;
-          image;
-          vendorId = product.vendorId;
-          createdAt = product.createdAt;
-        };
-        products.add(productId, updatedProduct);
+        products.add(productId, { product with name; description; price; imageUrl; originalPrice; sellingPrice; category });
       };
     };
   };
 
-  public shared ({ caller }) func deleteProduct(productId : Int) : async () {
+  public shared ({ caller }) func deleteProduct(productId : Text) : async () {
     switch (products.get(productId)) {
       case (null) { Runtime.trap("Product not found") };
       case (?product) {
@@ -538,16 +551,23 @@ actor {
   };
 
   public query ({ caller }) func getProductsByVendor(vendorId : Principal) : async [Product] {
-    products.values().toArray().filter(func(p) { p.vendorId == vendorId }).sort();
+    products.values().filter(func(p) { p.vendorId == vendorId }).toArray().sort();
+  };
+
+  public query func getProductsByStore(storeId : Text) : async [Product] {
+    products.values().filter(func(p) { p.storeId == storeId }).toArray().sort();
+  };
+
+  public query func getProductsByCategory(category : Text) : async [Product] {
+    products.values().filter(func(p) { p.category == category }).toArray().sort();
   };
 
   // ==========================================
   // LIVE DELIVERY LOCATION TRACKING
   // ==========================================
 
-  // Called by delivery partner every ~4 seconds while delivering
-  public shared ({ caller }) func updateDeliveryLocation(orderId : Int, lat : Float, lng : Float) : async () {
-    let loc = {
+  public shared ({ caller }) func updateDeliveryLocation(orderId : Text, lat : Float, lng : Float) : async () {
+    let loc : DeliveryLocation = {
       orderId;
       lat;
       lng;
@@ -557,13 +577,11 @@ actor {
     deliveryLocations.add(orderId, loc);
   };
 
-  // Called by customer for polling latest rider position
-  public query ({ caller }) func getDeliveryLocation(orderId : Int) : async ?DeliveryLocation {
+  public query ({ caller }) func getDeliveryLocation(orderId : Text) : async ?DeliveryLocation {
     deliveryLocations.get(orderId);
   };
 
-  // Clean up location after delivery is complete
-  public shared ({ caller }) func clearDeliveryLocation(orderId : Int) : async () {
+  public shared ({ caller }) func clearDeliveryLocation(orderId : Text) : async () {
     deliveryLocations.remove(orderId);
   };
 
@@ -571,18 +589,14 @@ actor {
   // VENDOR ANALYTICS
   // ==========================================
 
-  // Returns all orders for a given store (any status)
-  public query func getOrdersByStore(storeId : Int) : async [Order] {
+  public query func getOrdersByStore(storeId : Text) : async [Order] {
     orders.values().filter(func(o) { o.storeId == storeId }).toArray();
   };
 
   // Helper: convert nanosecond timestamp to YYYY-MM-DD text
   func timestampToDate(ns : Int) : Text {
-    // seconds since Unix epoch
     let secs = Int.abs(ns) / 1_000_000_000;
-    // days since epoch
     var days = secs / 86400;
-    // Gregorian calendar calculation
     var y : Nat = 1970;
     label yearLoop loop {
       let daysInYear : Nat = if (y % 400 == 0 or (y % 4 == 0 and y % 100 != 0)) 366 else 365;
@@ -611,13 +625,11 @@ actor {
     yText # "-" # mText # "-" # dText;
   };
 
-  // Helper: extract hour of day (0-23) from nanosecond timestamp
   func timestampToHour(ns : Int) : Nat {
     let secs = Int.abs(ns) / 1_000_000_000;
     (secs % 86400) / 3600;
   };
 
-  // Helper: format hour as human-readable label e.g. "7-9 PM"
   func hourToLabel(h : Nat) : Text {
     let period : Text = if (h < 12) "AM" else "PM";
     let h12 : Nat = if (h == 0) 12 else if (h > 12) h - 12 else h;
@@ -630,34 +642,42 @@ actor {
     };
   };
 
-  // Summary analytics for a vendor's store in a date range (delivered orders only)
-  public query func getVendorAnalytics(storeId : Int, startDate : Int, endDate : Int) : async {
+  // Summary analytics — delivered orders only; also returns pending count
+  public query func getVendorAnalytics(storeId : Text, startDate : Int, endDate : Int) : async {
     totalEarnings : Float;
     totalOrders : Nat;
     todayOrders : Nat;
+    pendingOrders : Nat;
     avgOrderValue : Float;
   } {
     let todayStart : Int = (Time.now() / 86_400_000_000_000) * 86_400_000_000_000;
     var totalEarnings : Float = 0.0;
     var totalOrders : Nat = 0;
     var todayOrders : Nat = 0;
+    var pendingOrders : Nat = 0;
     for (o in orders.values()) {
-      if (o.storeId == storeId and o.status == #delivered) {
-        if (o.createdAt >= startDate and o.createdAt <= endDate) {
-          totalEarnings += switch (o.totalAmount) { case (?v) v; case null 0.0 };
-          totalOrders += 1;
+      if (o.storeId == storeId) {
+        // Count pending (requested or storeConfirmed)
+        if (o.status == #requested or o.status == #storeConfirmed or o.status == #riderAssigned or o.status == #pickedUp) {
+          pendingOrders += 1;
         };
-        if (o.createdAt >= todayStart) {
-          todayOrders += 1;
+        // Earnings from delivered only
+        if (o.status == #delivered) {
+          if (o.createdAt >= startDate and o.createdAt <= endDate) {
+            totalEarnings += o.totalAmount;
+            totalOrders += 1;
+          };
+          if (o.createdAt >= todayStart) {
+            todayOrders += 1;
+          };
         };
       };
     };
     let avgOrderValue = if (totalOrders == 0) 0.0 else totalEarnings / totalOrders.toFloat();
-    { totalEarnings; totalOrders; todayOrders; avgOrderValue };
+    { totalEarnings; totalOrders; todayOrders; pendingOrders; avgOrderValue };
   };
 
-  // Earnings grouped by day (YYYY-MM-DD) within date range (delivered orders only)
-  public query func getVendorEarningsByDay(storeId : Int, startDate : Int, endDate : Int) : async [{
+  public query func getVendorEarningsByDay(storeId : Text, startDate : Int, endDate : Int) : async [{
     date : Text;
     earnings : Float;
   }] {
@@ -669,8 +689,7 @@ actor {
           case (?v) v;
           case null 0.0;
         };
-        let amount = switch (o.totalAmount) { case (?v) v; case null 0.0 };
-        earningsMap.add(dateKey, prev + amount);
+        earningsMap.add(dateKey, prev + o.totalAmount);
       };
     };
     let result = List.empty<{ date : Text; earnings : Float }>();
@@ -680,19 +699,21 @@ actor {
     result.toArray().sort(func(a, b) { Text.compare(a.date, b.date) });
   };
 
-  // Most-sold product (by itemName frequency) among delivered orders in range
-  public query func getVendorTopProduct(storeId : Int, startDate : Int, endDate : Int) : async {
+  public query func getVendorTopProduct(storeId : Text, startDate : Int, endDate : Int) : async {
     productName : Text;
     unitsSold : Nat;
   } {
     let countMap = Map.empty<Text, Nat>();
     for (o in orders.values()) {
       if (o.storeId == storeId and o.status == #delivered and o.createdAt >= startDate and o.createdAt <= endDate) {
-        let prev = switch (countMap.get(o.itemName)) {
-          case (?v) v;
-          case null 0;
+        // Count each item in the order
+        for (item in o.items.values()) {
+          let prev = switch (countMap.get(item.name)) {
+            case (?v) v;
+            case null 0;
+          };
+          countMap.add(item.name, prev + item.quantity);
         };
-        countMap.add(o.itemName, prev + 1);
       };
     };
     var topName : Text = "";
@@ -706,13 +727,11 @@ actor {
     { productName = topName; unitsSold = topCount };
   };
 
-  // Peak hour among delivered orders in range, returned as human-readable label
-  public query func getVendorPeakHour(storeId : Int, startDate : Int, endDate : Int) : async {
+  public query func getVendorPeakHour(storeId : Text, startDate : Int, endDate : Int) : async {
     hourLabel : Text;
     orderCount : Nat;
   } {
-    let hourCounts = Array.tabulate(24, func(_) { 0 });
-    let hourCountsVar = hourCounts.toVarArray<Nat>();
+    let hourCountsVar : [var Nat] = Array.tabulate(24, func(_ : Nat) : Nat { 0 }).toVarArray();
     for (o in orders.values()) {
       if (o.storeId == storeId and o.status == #delivered and o.createdAt >= startDate and o.createdAt <= endDate) {
         let h = timestampToHour(o.createdAt);
@@ -744,7 +763,6 @@ actor {
       return "Error: Invalid confirmation. Type RESET to confirm";
     };
 
-    // Delete in correct order: orders first, then delivery data, products, stores, users
     orders.clear();
     deliveryLocations.clear();
     products.clear();
@@ -752,12 +770,10 @@ actor {
     users.clear();
     otps.clear();
 
-    // Reset all ID counters
     nextOrderId := 1;
     nextProductId := 1;
     nextStoreId := 1;
 
-    // Log the reset action
     let logEntry : ResetLog = {
       timestamp = Time.now();
       caller;

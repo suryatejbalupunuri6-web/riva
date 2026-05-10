@@ -1,62 +1,117 @@
-import { type ReactNode, createContext, useContext, useState } from "react";
+import {
+  type ReactNode,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 import type { UserProfile } from "../backend";
 
-export type AppScreen =
-  | "landing"
-  | "phone-login"
-  | "otp-verify"
-  | "role-selection"
-  | "customer-dashboard"
-  | "vendor-dashboard"
-  | "delivery-dashboard"
-  | "cart"
-  | "store-list"
-  | "store-detail"
-  | "create-store"
-  | "global-search"
-  | "order-tracking"
-  | "admin-reset";
+// Keep AppScreen type for any remaining legacy references
+export type AppScreen = string;
+
+// All localStorage keys used by Riva — cleared on logout
+const LS_KEYS = [
+  "riva_user_name",
+  "riva_cart",
+  "riva_cart_store",
+  "riva_vendor_access",
+  "riva_delivery_access",
+  "riva_clerk_session",
+  "riva_terms",
+  "riva_termsAccepted",
+  "riva_acceptedVersion",
+] as const;
 
 interface AppContextType {
-  screen: AppScreen;
-  navigate: (screen: AppScreen) => void;
   currentPhone: string;
   setCurrentPhone: (phone: string) => void;
-  demoOtp: string;
-  setDemoOtp: (otp: string) => void;
+  clerkSessionId: string;
+  setClerkSessionId: (id: string) => void;
   currentUser: UserProfile | null;
   setCurrentUser: (user: UserProfile | null) => void;
-  currentStoreId: bigint | null;
-  setCurrentStoreId: (id: bigint | null) => void;
-  trackingOrderId: bigint | null;
-  setTrackingOrderId: (id: bigint | null) => void;
+  customerName: string;
+  setCustomerName: (name: string) => void;
+  /** Clears all Riva localStorage keys — call on logout */
+  logout: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+function readStoredName(): string {
+  try {
+    return localStorage.getItem("riva_user_name") ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [screen, setScreen] = useState<AppScreen>("landing");
   const [currentPhone, setCurrentPhone] = useState("");
-  const [demoOtp, setDemoOtp] = useState("");
+  const [clerkSessionId, _setClerkSessionId] = useState("");
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [currentStoreId, setCurrentStoreId] = useState<bigint | null>(null);
-  const [trackingOrderId, setTrackingOrderId] = useState<bigint | null>(null);
+  const [customerName, _setCustomerName] = useState<string>(readStoredName);
+
+  const setClerkSessionId = useCallback((id: string) => {
+    _setClerkSessionId(id);
+    try {
+      if (id) {
+        localStorage.setItem("riva_clerk_session", id);
+      } else {
+        localStorage.removeItem("riva_clerk_session");
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const setCustomerName = useCallback((name: string) => {
+    _setCustomerName(name);
+    try {
+      if (name) {
+        localStorage.setItem("riva_user_name", name);
+      } else {
+        localStorage.removeItem("riva_user_name");
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Sync customerName from profile when available
+  useEffect(() => {
+    if (currentUser?.name && !customerName) {
+      setCustomerName(currentUser.name);
+    }
+  }, [currentUser, customerName, setCustomerName]);
+
+  const logout = useCallback(() => {
+    setCurrentUser(null);
+    _setCustomerName("");
+    _setClerkSessionId("");
+    setCurrentPhone("");
+    try {
+      for (const key of LS_KEYS) {
+        localStorage.removeItem(key);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   return (
     <AppContext.Provider
       value={{
-        screen,
-        navigate: setScreen,
         currentPhone,
         setCurrentPhone,
-        demoOtp,
-        setDemoOtp,
+        clerkSessionId,
+        setClerkSessionId,
         currentUser,
         setCurrentUser,
-        currentStoreId,
-        setCurrentStoreId,
-        trackingOrderId,
-        setTrackingOrderId,
+        customerName,
+        setCustomerName,
+        logout,
       }}
     >
       {children}

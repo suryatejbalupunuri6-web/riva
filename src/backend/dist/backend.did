@@ -15,17 +15,17 @@ type UserProfile =
  };
 type Store = 
  record {
-   category: text;
+   categories: vec text;
    createdAt: int;
    deliveryTime: text;
    description: text;
-   image: text;
+   id: text;
+   imageUrl: text;
    isOpen: bool;
    latitude: float64;
    longitude: float64;
    name: text;
    rating: float64;
-   storeId: int;
    vendorId: principal;
  };
 type ResetLog = 
@@ -35,58 +35,73 @@ type ResetLog =
  };
 type Product = 
  record {
+   category: text;
    createdAt: int;
    description: text;
-   image: text;
+   id: text;
+   imageUrl: text;
    name: text;
+   originalPrice: float64;
    price: float64;
-   productId: int;
-   storeId: int;
+   sellingPrice: float64;
+   storeId: text;
    vendorId: principal;
  };
 type OrderStatus = 
  variant {
    delivered;
+   expired;
    pickedUp;
    requested;
    riderAssigned;
    storeConfirmed;
  };
+type OrderItem = 
+ record {
+   imageUrl: text;
+   name: text;
+   price: float64;
+   productId: text;
+   quantity: nat;
+ };
 type Order = 
  record {
+   address: text;
    createdAt: int;
-   customerAddress: text;
    customerId: principal;
    customerName: text;
    customerPhone: text;
-   id: int;
-   itemName: text;
+   deliveryFee: float64;
+   id: text;
+   items: vec OrderItem;
    pinnedLatitude: float64;
    pinnedLongitude: float64;
    status: OrderStatus;
-   storeId: int;
-   totalAmount: opt float64;
+   storeId: text;
+   totalAmount: float64;
  };
 type DeliveryLocation = 
  record {
    lat: float64;
    lng: float64;
-   orderId: int;
+   orderId: text;
    partnerId: principal;
    updatedAt: int;
  };
 service : {
-  addProduct: (storeId: int, name: text, description: text, price: float64,
-   image: text) -> (int);
-  clearDeliveryLocation: (orderId: int) -> ();
-  createOrder: (storeId: int, itemName: text, customerName: text,
-   customerPhone: text, customerAddress: text, pinnedLatitude: float64,
-   pinnedLongitude: float64, totalAmount: float64) -> (int);
-  createStore: (name: text, image: text, category: text, description: 
-   text, deliveryTime: text, latitude: float64, longitude: float64) -> (
-   int);
+  addProduct: (storeId: text, name: text, description: text, price: float64,
+   imageUrl: text, originalPrice: float64, sellingPrice: float64, category:
+   text) -> (text);
+  clearDeliveryLocation: (orderId: text) -> ();
+  createOrder: (storeId: text, items: vec OrderItem, customerName: text,
+   customerPhone: text, address: text, pinnedLatitude: float64,
+   pinnedLongitude: float64, totalAmount: float64, deliveryFee: float64) ->
+   (text);
+  createStore: (name: text, imageUrl: text, categories: vec text,
+   description: text, deliveryTime: text, latitude: float64, longitude:
+   float64) -> (text);
   createUserProfile: (phone: text, name: text, role: UserRole) -> ();
-  deleteProduct: (productId: int) -> ();
+  deleteProduct: (productId: text) -> ();
   generateOtp: (phone: text) -> (text);
   getAllCustomers: () -> (vec UserProfile) query;
   getAllOrders: () -> (vec Order) query;
@@ -95,35 +110,39 @@ service : {
   getAllUsers: () -> (vec UserProfile) query;
   getAllVendors: () -> (vec UserProfile) query;
   getCallerUserProfile: () -> (opt UserProfile) query;
-  getDeliveryLocation: (orderId: int) -> (opt DeliveryLocation) query;
-  getOrderById: (orderId: int) -> (opt Order) query;
-  getOrderStatus: (orderId: int) -> (opt OrderStatus) query;
+  getDeliveryLocation: (orderId: text) -> (opt DeliveryLocation) query;
+  getOrderById: (orderId: text) -> (opt Order) query;
+  getOrderStatus: (orderId: text) -> (opt OrderStatus) query;
   getOrdersByCustomer: (customer: principal) -> (vec Order) query;
   getOrdersByStatus: (status: OrderStatus) -> (vec Order) query;
-  getOrdersByStore: (storeId: int) -> (vec Order) query;
+  getOrdersByStore: (storeId: text) -> (vec Order) query;
+  getProductsByCategory: (category: text) -> (vec Product) query;
+  getProductsByStore: (storeId: text) -> (vec Product) query;
   getProductsByVendor: (vendorId: principal) -> (vec Product) query;
   getResetLogs: () -> (vec ResetLog) query;
-  getStoreById: (storeId: int) -> (opt Store) query;
+  getStoreById: (storeId: text) -> (opt Store) query;
   getStoreByVendor: (vendorId: principal) -> (opt Store) query;
+  getStoresByVendor: (vendorId: principal) -> (vec Store) query;
   getUserProfile: (user: principal) -> (opt UserProfile) query;
-  getVendorAnalytics: (storeId: int, startDate: int, endDate: int) ->
+  getVendorAnalytics: (storeId: text, startDate: int, endDate: int) ->
    (record {
       avgOrderValue: float64;
+      pendingOrders: nat;
       todayOrders: nat;
       totalEarnings: float64;
       totalOrders: nat;
     }) query;
-  getVendorEarningsByDay: (storeId: int, startDate: int, endDate: int) ->
+  getVendorEarningsByDay: (storeId: text, startDate: int, endDate: int) ->
    (vec record {
           date: text;
           earnings: float64;
         }) query;
-  getVendorPeakHour: (storeId: int, startDate: int, endDate: int) ->
+  getVendorPeakHour: (storeId: text, startDate: int, endDate: int) ->
    (record {
       hourLabel: text;
       orderCount: nat;
     }) query;
-  getVendorTopProduct: (storeId: int, startDate: int, endDate: int) ->
+  getVendorTopProduct: (storeId: text, startDate: int, endDate: int) ->
    (record {
       productName: text;
       unitsSold: nat;
@@ -132,14 +151,15 @@ service : {
   isNewUser: (phone: text) -> (bool) query;
   resetAllData: (adminPassword: text, confirmation: text) -> (text);
   saveCallerUserProfile: (profile: UserProfile) -> ();
-  toggleStoreOpen: (storeId: int) -> (bool);
-  updateDeliveryLocation: (orderId: int, lat: float64, lng: float64) -> ();
-  updateOrderStatus: (orderId: int, newStatus: OrderStatus) -> ();
-  updateProduct: (productId: int, name: text, description: text, price:
-   float64, image: text) -> ();
-  updateStore: (storeId: int, name: text, image: text, category: text,
-   description: text, deliveryTime: text) -> ();
-  updateStoreLocation: (storeId: int, latitude: float64, longitude:
+  toggleStoreOpen: (storeId: text) -> (bool);
+  updateDeliveryLocation: (orderId: text, lat: float64, lng: float64) -> ();
+  updateOrderStatus: (orderId: text, newStatus: OrderStatus) -> ();
+  updateProduct: (productId: text, name: text, description: text, price:
+   float64, imageUrl: text, originalPrice: float64, sellingPrice: float64,
+   category: text) -> ();
+  updateStore: (storeId: text, name: text, imageUrl: text, categories:
+   vec text, description: text, deliveryTime: text) -> ();
+  updateStoreLocation: (storeId: text, latitude: float64, longitude:
    float64) -> ();
   updateUserRole: (user: principal, newRole: UserRole) -> ();
   verifyOtp: (phone: text, code: text) -> (bool);

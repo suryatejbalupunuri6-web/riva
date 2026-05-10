@@ -13,53 +13,65 @@ import type { Principal } from '@icp-sdk/core/principal';
 export interface DeliveryLocation {
   'lat' : number,
   'lng' : number,
-  'orderId' : bigint,
+  'orderId' : string,
   'partnerId' : Principal,
   'updatedAt' : bigint,
 }
 export interface Order {
-  'id' : bigint,
+  'id' : string,
   'customerName' : string,
   'status' : OrderStatus,
+  'deliveryFee' : number,
   'customerPhone' : string,
-  'storeId' : bigint,
+  'storeId' : string,
   'createdAt' : bigint,
   'pinnedLongitude' : number,
   'pinnedLatitude' : number,
-  'customerAddress' : string,
-  'totalAmount' : [] | [number],
-  'itemName' : string,
+  'totalAmount' : number,
+  'address' : string,
   'customerId' : Principal,
+  'items' : Array<OrderItem>,
+}
+export interface OrderItem {
+  'name' : string,
+  'productId' : string,
+  'imageUrl' : string,
+  'quantity' : bigint,
+  'price' : number,
 }
 export type OrderStatus = { 'riderAssigned' : null } |
   { 'requested' : null } |
+  { 'expired' : null } |
   { 'storeConfirmed' : null } |
   { 'pickedUp' : null } |
   { 'delivered' : null };
 export interface Product {
-  'storeId' : bigint,
+  'id' : string,
+  'originalPrice' : number,
+  'storeId' : string,
   'name' : string,
   'createdAt' : bigint,
+  'sellingPrice' : number,
   'description' : string,
-  'productId' : bigint,
+  'imageUrl' : string,
   'vendorId' : Principal,
-  'image' : string,
+  'category' : string,
   'price' : number,
 }
 export interface ResetLog { 'timestamp' : bigint, 'caller' : Principal }
 export interface Store {
+  'id' : string,
+  'categories' : Array<string>,
   'latitude' : number,
-  'storeId' : bigint,
   'name' : string,
   'createdAt' : bigint,
   'description' : string,
   'isOpen' : boolean,
   'deliveryTime' : string,
+  'imageUrl' : string,
   'longitude' : number,
   'vendorId' : Principal,
-  'category' : string,
   'rating' : number,
-  'image' : string,
 }
 export interface UserProfile {
   'id' : Principal,
@@ -73,18 +85,31 @@ export type UserRole = { 'admin' : null } |
   { 'store' : null } |
   { 'deliveryP' : null };
 export interface _SERVICE {
-  'addProduct' : ActorMethod<[bigint, string, string, number, string], bigint>,
-  'clearDeliveryLocation' : ActorMethod<[bigint], undefined>,
+  'addProduct' : ActorMethod<
+    [string, string, string, number, string, number, number, string],
+    string
+  >,
+  'clearDeliveryLocation' : ActorMethod<[string], undefined>,
   'createOrder' : ActorMethod<
-    [bigint, string, string, string, string, number, number, number],
-    bigint
+    [
+      string,
+      Array<OrderItem>,
+      string,
+      string,
+      string,
+      number,
+      number,
+      number,
+      number,
+    ],
+    string
   >,
   'createStore' : ActorMethod<
-    [string, string, string, string, string, number, number],
-    bigint
+    [string, string, Array<string>, string, string, number, number],
+    string
   >,
   'createUserProfile' : ActorMethod<[string, string, UserRole], undefined>,
-  'deleteProduct' : ActorMethod<[bigint], undefined>,
+  'deleteProduct' : ActorMethod<[string], undefined>,
   'generateOtp' : ActorMethod<[string], string>,
   'getAllCustomers' : ActorMethod<[], Array<UserProfile>>,
   'getAllOrders' : ActorMethod<[], Array<Order>>,
@@ -93,54 +118,58 @@ export interface _SERVICE {
   'getAllUsers' : ActorMethod<[], Array<UserProfile>>,
   'getAllVendors' : ActorMethod<[], Array<UserProfile>>,
   'getCallerUserProfile' : ActorMethod<[], [] | [UserProfile]>,
-  'getDeliveryLocation' : ActorMethod<[bigint], [] | [DeliveryLocation]>,
-  'getOrderById' : ActorMethod<[bigint], [] | [Order]>,
-  'getOrderStatus' : ActorMethod<[bigint], [] | [OrderStatus]>,
+  'getDeliveryLocation' : ActorMethod<[string], [] | [DeliveryLocation]>,
+  'getOrderById' : ActorMethod<[string], [] | [Order]>,
+  'getOrderStatus' : ActorMethod<[string], [] | [OrderStatus]>,
   'getOrdersByCustomer' : ActorMethod<[Principal], Array<Order>>,
   'getOrdersByStatus' : ActorMethod<[OrderStatus], Array<Order>>,
-  'getOrdersByStore' : ActorMethod<[bigint], Array<Order>>,
+  'getOrdersByStore' : ActorMethod<[string], Array<Order>>,
+  'getProductsByCategory' : ActorMethod<[string], Array<Product>>,
+  'getProductsByStore' : ActorMethod<[string], Array<Product>>,
   'getProductsByVendor' : ActorMethod<[Principal], Array<Product>>,
   'getResetLogs' : ActorMethod<[], Array<ResetLog>>,
-  'getStoreById' : ActorMethod<[bigint], [] | [Store]>,
+  'getStoreById' : ActorMethod<[string], [] | [Store]>,
   'getStoreByVendor' : ActorMethod<[Principal], [] | [Store]>,
+  'getStoresByVendor' : ActorMethod<[Principal], Array<Store>>,
   'getUserProfile' : ActorMethod<[Principal], [] | [UserProfile]>,
   'getVendorAnalytics' : ActorMethod<
-    [bigint, bigint, bigint],
+    [string, bigint, bigint],
     {
       'totalOrders' : bigint,
+      'pendingOrders' : bigint,
       'totalEarnings' : number,
       'avgOrderValue' : number,
       'todayOrders' : bigint,
     }
   >,
   'getVendorEarningsByDay' : ActorMethod<
-    [bigint, bigint, bigint],
+    [string, bigint, bigint],
     Array<{ 'date' : string, 'earnings' : number }>
   >,
   'getVendorPeakHour' : ActorMethod<
-    [bigint, bigint, bigint],
+    [string, bigint, bigint],
     { 'hourLabel' : string, 'orderCount' : bigint }
   >,
   'getVendorTopProduct' : ActorMethod<
-    [bigint, bigint, bigint],
+    [string, bigint, bigint],
     { 'productName' : string, 'unitsSold' : bigint }
   >,
   'isCallerAdmin' : ActorMethod<[], boolean>,
   'isNewUser' : ActorMethod<[string], boolean>,
   'resetAllData' : ActorMethod<[string, string], string>,
   'saveCallerUserProfile' : ActorMethod<[UserProfile], undefined>,
-  'toggleStoreOpen' : ActorMethod<[bigint], boolean>,
-  'updateDeliveryLocation' : ActorMethod<[bigint, number, number], undefined>,
-  'updateOrderStatus' : ActorMethod<[bigint, OrderStatus], undefined>,
+  'toggleStoreOpen' : ActorMethod<[string], boolean>,
+  'updateDeliveryLocation' : ActorMethod<[string, number, number], undefined>,
+  'updateOrderStatus' : ActorMethod<[string, OrderStatus], undefined>,
   'updateProduct' : ActorMethod<
-    [bigint, string, string, number, string],
+    [string, string, string, number, string, number, number, string],
     undefined
   >,
   'updateStore' : ActorMethod<
-    [bigint, string, string, string, string, string],
+    [string, string, string, Array<string>, string, string],
     undefined
   >,
-  'updateStoreLocation' : ActorMethod<[bigint, number, number], undefined>,
+  'updateStoreLocation' : ActorMethod<[string, number, number], undefined>,
   'updateUserRole' : ActorMethod<[Principal, UserRole], undefined>,
   'verifyOtp' : ActorMethod<[string, string], boolean>,
 }

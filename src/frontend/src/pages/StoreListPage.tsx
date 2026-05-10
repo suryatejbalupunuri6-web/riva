@@ -2,23 +2,22 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Clock, Search, Star, Store, X } from "lucide-react";
 import { motion } from "motion/react";
 import { useMemo, useState } from "react";
 import type { Store as StoreType } from "../backend";
-import { useApp } from "../context/AppContext";
 import { useAllStores } from "../hooks/useQueries";
 
-const CATEGORY_FILTERS = [
-  "All",
-  "Grocery",
-  "Snacks",
-  "Fruits",
-  "Beverages",
-  "Bakery",
-  "Dairy",
-  "Electronics",
-  "Other",
+type CategoryEntry = { label: string; icon: string };
+
+const CATEGORY_FILTERS: CategoryEntry[] = [
+  { label: "All", icon: "🏪" },
+  { label: "Stationery", icon: "📚" },
+  { label: "Grocery", icon: "🛒" },
+  { label: "Fruits", icon: "🍎" },
+  { label: "Fashion", icon: "👗" },
+  { label: "Toys", icon: "🧸" },
 ];
 
 function StarRating({ rating }: { rating: number }) {
@@ -41,9 +40,9 @@ function StoreCard({
   onClick: () => void;
 }) {
   const imgSrc =
-    store.image && store.image.trim() !== ""
-      ? store.image
-      : `https://via.placeholder.com/400x200?text=${encodeURIComponent(store.name)}`;
+    store.imageUrl && store.imageUrl.trim() !== ""
+      ? store.imageUrl
+      : `https://picsum.photos/seed/store-${store.id}/400/200`;
 
   return (
     <motion.button
@@ -54,7 +53,7 @@ function StoreCard({
       whileHover={{ y: -2 }}
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
-      className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col text-left w-full transition-shadow hover:shadow-md"
+      className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden flex flex-col text-left w-full transition-shadow hover:shadow-md"
       data-ocid={`stores.item.${idx + 1}`}
     >
       <div className="relative">
@@ -65,15 +64,23 @@ function StoreCard({
           loading="lazy"
           onError={(e) => {
             (e.target as HTMLImageElement).src =
-              `https://via.placeholder.com/400x200?text=${encodeURIComponent(store.name)}`;
+              `https://picsum.photos/seed/store-${store.id}/400/200`;
           }}
         />
+        {/* Closed overlay */}
+        {!store.isOpen && (
+          <div className="absolute inset-0 bg-foreground/40 flex items-center justify-center">
+            <span className="text-xs font-extrabold text-white bg-foreground/70 px-2 py-1 rounded-lg">
+              CLOSED
+            </span>
+          </div>
+        )}
         <div className="absolute top-2 right-2">
           <span
             className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
               store.isOpen
-                ? "bg-green-500 text-white"
-                : "bg-gray-400 text-white"
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground"
             }`}
           >
             {store.isOpen ? "OPEN" : "CLOSED"}
@@ -81,18 +88,20 @@ function StoreCard({
         </div>
       </div>
       <div className="p-3 flex flex-col gap-1 flex-1">
-        <p className="font-extrabold text-sm text-gray-900 truncate">
+        <p className="font-extrabold text-sm text-foreground truncate">
           {store.name}
         </p>
         <Badge
           variant="secondary"
-          className="w-fit text-[10px] px-1.5 py-0 font-semibold bg-green-50 text-green-700 border-green-200"
+          className="w-fit text-[10px] px-1.5 py-0 font-semibold bg-primary/10 text-primary border-primary/20"
         >
-          {store.category}
+          {Array.isArray(store.categories) && store.categories.length > 0
+            ? store.categories.join(", ")
+            : "General"}
         </Badge>
         <div className="flex items-center justify-between mt-1">
           <StarRating rating={store.rating} />
-          <span className="flex items-center gap-1 text-[11px] text-gray-500">
+          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
             <Clock className="w-3 h-3" />
             {store.deliveryTime}
           </span>
@@ -105,7 +114,7 @@ function StoreCard({
 function StoreCardSkeleton({ idx }: { idx: number }) {
   return (
     <div
-      className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden"
+      className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden"
       style={{ animationDelay: `${idx * 80}ms` }}
     >
       <Skeleton className="w-full h-32" />
@@ -121,17 +130,30 @@ function StoreCardSkeleton({ idx }: { idx: number }) {
 const SKELETON_KEYS = ["sk1", "sk2", "sk3", "sk4", "sk5", "sk6"];
 
 export default function StoreListPage() {
-  const { navigate, setCurrentStoreId } = useApp();
+  const navigate = useNavigate();
   const { data: stores = [], isLoading } = useAllStores();
   const [search, setSearch] = useState("");
-  const [activeCategory, setActiveCategory] = useState("All");
+  const [activeCategory, setActiveCategory] = useState(() => {
+    try {
+      const saved = localStorage.getItem("riva_category_filter");
+      if (saved) {
+        localStorage.removeItem("riva_category_filter");
+        return saved;
+      }
+    } catch {}
+    return "All";
+  });
 
   const filtered = useMemo(() => {
     let result = stores;
 
     if (activeCategory !== "All") {
-      result = result.filter(
-        (s) => s.category.toLowerCase() === activeCategory.toLowerCase(),
+      result = result.filter((s) =>
+        Array.isArray(s.categories)
+          ? s.categories.some(
+              (c) => c.toLowerCase() === activeCategory.toLowerCase(),
+            )
+          : false,
       );
     }
 
@@ -140,7 +162,9 @@ export default function StoreListPage() {
       result = result.filter(
         (s) =>
           s.name.toLowerCase().includes(q) ||
-          s.category.toLowerCase().includes(q) ||
+          (Array.isArray(s.categories)
+            ? s.categories.some((c) => c.toLowerCase().includes(q))
+            : false) ||
           s.description.toLowerCase().includes(q),
       );
     }
@@ -152,8 +176,7 @@ export default function StoreListPage() {
   }, [stores, search, activeCategory]);
 
   const handleStoreClick = (store: StoreType) => {
-    setCurrentStoreId(store.storeId);
-    navigate("store-detail");
+    navigate({ to: "/customer/store/$storeId", params: { storeId: store.id } });
   };
 
   return (
@@ -162,62 +185,72 @@ export default function StoreListPage() {
       <div className="flex items-center gap-3 mb-5">
         <button
           type="button"
-          onClick={() => navigate("customer-dashboard")}
-          className="flex items-center gap-1 text-sm font-semibold text-green-600 hover:text-green-700"
+          onClick={() => navigate({ to: "/customer" })}
+          className="flex items-center gap-1 text-sm font-semibold text-primary hover:text-primary/80 transition-colors"
           data-ocid="stores.back.button"
         >
           <ArrowLeft className="w-4 h-4" />
           Back
         </button>
-        <h1 className="text-xl font-extrabold text-gray-900 flex items-center gap-2">
-          <Store className="w-5 h-5 text-green-500" />
+        <h1 className="text-xl font-extrabold text-foreground flex items-center gap-2">
+          <Store className="w-5 h-5 text-primary" />
           Browse Stores
         </h1>
       </div>
 
       {/* Search */}
       <div className="relative mb-4">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search stores, categories..."
-          className="pl-9 pr-9 border-gray-200 rounded-xl bg-white text-sm"
+          className="pl-9 pr-9 rounded-xl text-sm"
           data-ocid="stores.search_input"
         />
         {search && (
           <button
             type="button"
             onClick={() => setSearch("")}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           >
             <X className="w-4 h-4" />
           </button>
         )}
       </div>
 
-      {/* Category chips */}
-      <div className="flex gap-2 overflow-x-auto pb-2 mb-4 scrollbar-hide">
+      {/* Category pills */}
+      <div
+        className="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-4 px-4"
+        style={{ scrollbarWidth: "none" }}
+        data-ocid="stores.categories.list"
+      >
         {CATEGORY_FILTERS.map((cat) => (
           <button
-            key={cat}
+            key={cat.label}
             type="button"
-            onClick={() => setActiveCategory(cat)}
-            className={`flex-shrink-0 text-xs font-bold px-3 py-1.5 rounded-full transition-colors border ${
-              activeCategory === cat
-                ? "bg-green-500 text-white border-green-500"
-                : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+            onClick={() => setActiveCategory(cat.label)}
+            className={`flex-shrink-0 flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-full transition-colors border shadow-sm ${
+              activeCategory === cat.label
+                ? "text-primary-foreground border-primary"
+                : "bg-card text-foreground border-border hover:bg-muted"
             }`}
+            style={
+              activeCategory === cat.label
+                ? { backgroundColor: "#16a34a", borderColor: "#16a34a" }
+                : undefined
+            }
             data-ocid="stores.category.tab"
           >
-            {cat}
+            <span className="text-sm leading-none">{cat.icon}</span>
+            {cat.label}
           </button>
         ))}
       </div>
 
       {/* Results count */}
       {!isLoading && (
-        <p className="text-xs text-gray-500 mb-3 font-medium">
+        <p className="text-xs text-muted-foreground mb-3 font-medium">
           {filtered.length} store{filtered.length !== 1 ? "s" : ""}
           {activeCategory !== "All" ? ` in ${activeCategory}` : ""}
           {search ? ` matching "${search}"` : ""}
@@ -236,11 +269,11 @@ export default function StoreListPage() {
         </div>
       ) : filtered.length === 0 ? (
         <div
-          className="text-center py-16 text-gray-500"
+          className="text-center py-16 text-muted-foreground"
           data-ocid="stores.empty_state"
         >
-          <Store className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-          <p className="font-semibold text-gray-600">
+          <Store className="w-12 h-12 mx-auto mb-3 text-muted-foreground/40" />
+          <p className="font-semibold text-foreground">
             {search || activeCategory !== "All"
               ? "No stores match your search"
               : "No stores available yet"}
@@ -253,7 +286,7 @@ export default function StoreListPage() {
                 setSearch("");
                 setActiveCategory("All");
               }}
-              className="mt-2 text-green-600"
+              className="mt-2 text-primary"
             >
               Clear filters
             </Button>
@@ -263,7 +296,7 @@ export default function StoreListPage() {
         <div className="grid grid-cols-2 gap-3" data-ocid="stores.list">
           {filtered.map((store, i) => (
             <StoreCard
-              key={store.storeId.toString()}
+              key={store.id}
               store={store}
               idx={i}
               onClick={() => handleStoreClick(store)}

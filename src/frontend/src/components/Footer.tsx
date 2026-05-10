@@ -12,10 +12,7 @@ export default function Footer() {
             <div className="w-6 h-6 bg-primary rounded-md flex items-center justify-center">
               <Zap className="w-3.5 h-3.5 text-primary-foreground fill-current" />
             </div>
-            <span className="font-bold text-sm">
-              <span className="text-card">Flash</span>
-              <span className="text-primary">Mart</span>
-            </span>
+            <span className="font-bold text-sm text-card">Riva</span>
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-4 text-xs text-card/60">
             <span>Hyperlocal delivery, instantly.</span>

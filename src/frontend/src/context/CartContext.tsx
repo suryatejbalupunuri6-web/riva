@@ -11,21 +11,31 @@ import { toast } from "sonner";
 export interface CartItem {
   id: string;
   name: string;
+  /** sellingPrice (or price if no discount) */
   price: number;
   quantity: number;
+  /** product image URL */
+  imageUrl?: string;
 }
 
 interface CartContextType {
   items: CartItem[];
-  addItem: (item: Omit<CartItem, "quantity">, storeId?: bigint) => void;
+  addItem: (item: Omit<CartItem, "quantity">, storeId?: string) => void;
   increaseQty: (id: string) => void;
   decreaseQty: (id: string) => void;
   removeItem: (id: string) => void;
   clearCart: () => void;
+  /** Total number of items (sum of quantities) */
   totalItems: number;
+  /** itemCount alias */
+  itemCount: number;
+  /** Sum of sellingPrice × qty */
   totalPrice: number;
-  currentStoreId: bigint | null;
-  setCurrentStoreId: (id: bigint | null) => void;
+  /** cartTotal alias */
+  cartTotal: number;
+  /** storeId (string) that the current cart belongs to */
+  currentStoreId: string | null;
+  setCurrentStoreId: (id: string | null) => void;
 }
 
 const STORAGE_KEY = "riva_cart";
@@ -43,74 +53,57 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
   });
 
-  const [currentStoreId, setCurrentStoreIdState] = useState<bigint | null>(
+  const [currentStoreId, setCurrentStoreIdState] = useState<string | null>(
     () => {
       try {
-        const stored = localStorage.getItem(STORE_KEY);
-        return stored ? BigInt(stored) : null;
+        return localStorage.getItem(STORE_KEY) ?? null;
       } catch {
         return null;
       }
     },
   );
 
+  // Persist cart items
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   }, [items]);
 
-  const setCurrentStoreId = useCallback((id: bigint | null) => {
+  const setCurrentStoreId = useCallback((id: string | null) => {
     setCurrentStoreIdState(id);
     if (id !== null) {
-      localStorage.setItem(STORE_KEY, id.toString());
+      localStorage.setItem(STORE_KEY, id);
     } else {
       localStorage.removeItem(STORE_KEY);
     }
   }, []);
 
   const addItem = useCallback(
-    (item: Omit<CartItem, "quantity">, storeId?: bigint) => {
-      // Check for store conflict
+    (item: Omit<CartItem, "quantity">, storeId?: string) => {
       if (storeId !== undefined) {
-        setCurrentStoreIdState((prev) => {
-          if (prev !== null && prev !== storeId) {
-            // Store conflict — warn user
-            toast.error(
-              "Your cart has items from another store. Clear your cart to shop here.",
-              { duration: 4000 },
-            );
-            return prev; // don't change store
-          }
-          if (prev === null) {
-            localStorage.setItem(STORE_KEY, storeId.toString());
-          }
-          return storeId;
-        });
-        // Check items before adding — if conflict, bail
-        setItems((prev) => {
-          const storeKey = localStorage.getItem(STORE_KEY);
-          const existingStoreId = storeKey ? BigInt(storeKey) : null;
-          if (existingStoreId !== null && existingStoreId !== storeId) {
-            return prev; // conflict, don't add
-          }
-          const existing = prev.find((i) => i.id === item.id);
-          if (existing) {
-            return prev.map((i) =>
-              i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i,
-            );
-          }
-          return [...prev, { ...item, quantity: 1 }];
-        });
-      } else {
-        setItems((prev) => {
-          const existing = prev.find((i) => i.id === item.id);
-          if (existing) {
-            return prev.map((i) =>
-              i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i,
-            );
-          }
-          return [...prev, { ...item, quantity: 1 }];
-        });
+        const storedStoreKey = localStorage.getItem(STORE_KEY);
+        if (storedStoreKey !== null && storedStoreKey !== storeId) {
+          toast.error(
+            "Your cart has items from another store. Clear your cart to shop here.",
+            { duration: 4000 },
+          );
+          return;
+        }
+        // Set store before adding items
+        if (storedStoreKey === null) {
+          localStorage.setItem(STORE_KEY, storeId);
+          setCurrentStoreIdState(storeId);
+        }
       }
+
+      setItems((prev) => {
+        const existing = prev.find((i) => i.id === item.id);
+        if (existing) {
+          return prev.map((i) =>
+            i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i,
+          );
+        }
+        return [...prev, { ...item, quantity: 1 }];
+      });
     },
     [],
   );
@@ -151,7 +144,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
         removeItem,
         clearCart,
         totalItems,
+        itemCount: totalItems,
         totalPrice,
+        cartTotal: totalPrice,
         currentStoreId,
         setCurrentStoreId,
       }}

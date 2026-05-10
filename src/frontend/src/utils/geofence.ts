@@ -10,10 +10,7 @@ export const GLOBAL_DELIVERY_ZONE: { lat: number; lng: number }[] = [
   { lat: 17.34137, lng: 78.54815 }, // closed
 ];
 
-/**
- * Expand polygon outward from centroid by `buffer` degrees to handle GPS jitter.
- * ~10 metres ≈ 0.00009°
- */
+/** Expand polygon outward from centroid by `buffer` degrees to handle GPS jitter (~10m = 0.00009°). */
 function expandPolygon(
   polygon: { lat: number; lng: number }[],
   buffer: number,
@@ -35,14 +32,19 @@ function expandPolygon(
 
 /**
  * Ray-casting point-in-polygon with a ~10 m buffer (0.00009°) for GPS edge tolerance.
+ * Accepts polygon as either { lat, lng }[] objects or [lat, lng][] tuples.
  */
 export function isPointInPolygon(
   lat: number,
   lng: number,
-  polygon: { lat: number; lng: number }[],
+  polygon: { lat: number; lng: number }[] | number[][],
   buffer = 0.00009,
 ): boolean {
-  const expanded = expandPolygon(polygon, buffer);
+  // Normalize polygon to object form
+  const normalized: { lat: number; lng: number }[] = polygon.map((p) =>
+    Array.isArray(p) ? { lat: p[0], lng: p[1] } : p,
+  );
+  const expanded = expandPolygon(normalized, buffer);
   let inside = false;
   const n = expanded.length;
   for (let i = 0, j = n - 1; i < n; j = i++) {

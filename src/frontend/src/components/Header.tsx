@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { Menu, X, Zap } from "lucide-react";
 import { useState } from "react";
 import { useApp } from "../context/AppContext";
@@ -12,23 +13,26 @@ interface HeaderProps {
 export default function Header({ onLogout }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { identity, login, isLoggingIn } = useInternetIdentity();
-  const { navigate, currentUser, screen } = useApp();
+  const { currentUser } = useApp();
+  const navigate = useNavigate();
+  const routerState = useRouterState();
+  const currentPath = routerState.location.pathname;
   const isAuthenticated = !!identity;
 
   const navLinks = [
-    { label: "Home", screen: "landing" as const },
-    { label: "Customer", screen: "customer-dashboard" as const },
-    { label: "Vendor", screen: "vendor-dashboard" as const },
-    { label: "Delivery", screen: "delivery-dashboard" as const },
+    { label: "Home", path: "/" },
+    { label: "Customer", path: "/customer" },
+    { label: "Vendor", path: "/vendor" },
+    { label: "Delivery", path: "/delivery" },
   ];
 
-  const handleNavClick = (target: (typeof navLinks)[number]["screen"]) => {
-    if (target === "landing") {
-      navigate("landing");
+  const handleNavClick = (path: string) => {
+    if (path === "/") {
+      navigate({ to: "/" });
     } else if (isAuthenticated && currentUser) {
-      navigate(target);
+      navigate({ to: path as "/customer" | "/vendor" | "/delivery" });
     } else {
-      navigate("landing");
+      navigate({ to: "/" });
     }
     setMobileMenuOpen(false);
   };
@@ -40,7 +44,7 @@ export default function Header({ onLogout }: HeaderProps) {
           {/* Logo */}
           <button
             type="button"
-            onClick={() => navigate("landing")}
+            onClick={() => navigate({ to: "/" })}
             className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
             data-ocid="header.link"
           >
@@ -58,10 +62,10 @@ export default function Header({ onLogout }: HeaderProps) {
             {navLinks.map((link) => (
               <button
                 type="button"
-                key={link.screen}
-                onClick={() => handleNavClick(link.screen)}
+                key={link.path}
+                onClick={() => handleNavClick(link.path)}
                 className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${
-                  screen === link.screen
+                  currentPath === link.path
                     ? "text-primary bg-accent"
                     : "text-foreground/80 hover:text-foreground hover:bg-muted"
                 }`}
@@ -127,8 +131,8 @@ export default function Header({ onLogout }: HeaderProps) {
           {navLinks.map((link) => (
             <button
               type="button"
-              key={link.screen}
-              onClick={() => handleNavClick(link.screen)}
+              key={link.path}
+              onClick={() => handleNavClick(link.path)}
               className="block w-full text-left px-3 py-2 text-sm font-semibold text-foreground/80 hover:text-foreground hover:bg-muted rounded-md"
               data-ocid={`nav.mobile.${link.label.toLowerCase()}.link`}
             >
